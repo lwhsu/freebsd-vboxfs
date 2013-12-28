@@ -33,12 +33,13 @@ vboxvfs_INCS          = \
        $(vboxvfs_0_OUTDIR)
 vboxvfs_SOURCES       = \
 	vboxvfs_vfsops.c \
-	vboxvfs_vnops.c
+	vboxvfs_vnops.c \
+	vboxvfs_prov.c 
 vboxvfs_LIBS          = \
 	$(VBOX_LIB_VBGL_R0) \
 	$(VBOX_LIB_IPRT_GUEST_R0)
 vboxvfs_DEPS          = \
-       $$(vboxvfs_0_OUTDIR)/vnode_if.h \
+#       $$(vboxvfs_0_OUTDIR)/vnode_if.h \
        $$(vboxvfs_0_OUTDIR)/vnode_if_newproto.h \
        $$(vboxvfs_0_OUTDIR)/vnode_if_typedef.h
 vboxvfs_CLEAN        += $(vboxvfs_DEPS)
