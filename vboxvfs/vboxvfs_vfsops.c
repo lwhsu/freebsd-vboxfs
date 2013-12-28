@@ -211,20 +211,20 @@ static int vboxfs_mount(struct mount *mp)
 		return (EINVAL);
 
 	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, share_name, td);
-	printf("Device exist_0 %d", namei(ndp));
+	printf("Device exist_0 %d\n", namei(ndp));
 	if ((error = namei(ndp)))
 		return (error);
-	printf("Device exist");
+	printf("Device exist_1\n");
 	NDFREE(ndp, NDF_ONLY_PNBUF);
 	devvp = ndp->ni_vp;
 
-	printf("Device exist_2");
+	printf("Device exist_2\n");
 	if (vn_isdisk(devvp, &error) == 0) {
 		vput(devvp);
 		return (error);
 	}
 
-	printf("Device exist_3");
+	printf("Device exist_3\n");
 	/* Check the access rights on the mount device */
 	error = VOP_ACCESS(devvp, VREAD, td->td_ucred, td);
 	if (error)
@@ -234,7 +234,7 @@ static int vboxfs_mount(struct mount *mp)
 		return (error);
 	}
 
-	printf("Device exist_4");
+	printf("Device exist_4\n");
 	dev = devvp->v_rdev;
 	dev_ref(dev);
 	DROP_GIANT();
