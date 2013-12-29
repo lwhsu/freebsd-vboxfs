@@ -45,9 +45,11 @@ MALLOC_DEFINE(M_VBOXVFS, "vboxvfs", "VBOX VFS");
 #endif
 
 static int vboxfs_version = VBOXVFS_VERSION;
+static u_int vboxvfs_debug = 0;
 
 SYSCTL_NODE(_vfs, OID_AUTO, vboxfs, CTLFLAG_RW, 0, "VirtualBox shared filesystem");
 SYSCTL_INT(_vfs_vboxfs, OID_AUTO, version, CTLFLAG_RD, &vboxfs_version, 0, "");
+SYSCTL_UINT(_vfs_vboxfs, OID_AUTO, debug, CTLFLAG_RW, &vboxvfs_debug, 0, "Debug level");
 
 /* global connection to the host service. */
 static VBSFCLIENT g_vboxSFClient;
@@ -129,7 +131,7 @@ static int vboxfs_mount(struct mount *mp)
 	uid_t uid = 0;
 	gid_t gid = 0;
 
-    	printf("%s: Enter \n", __FUNCTION__);
+	VBOXVFS_DEBUG(0, "%s: Enter\n", __FUNCTION__);
 
     	if (mp->mnt_flag & (MNT_UPDATE | MNT_ROOTFS))
         	return (EOPNOTSUPP);
@@ -211,20 +213,20 @@ static int vboxfs_mount(struct mount *mp)
 		return (EINVAL);
 
 	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, share_name, td);
-	printf("Device exist_0 %d\n", namei(ndp));
+	VBOXVFS_DEBUG(0, "Device exist_0 %d\n", namei(ndp));
 	if ((error = namei(ndp)))
 		return (error);
-	printf("Device exist_1\n");
+	VBOXVFS_DEBUG(0, "Device exist_1\n");
 	NDFREE(ndp, NDF_ONLY_PNBUF);
 	devvp = ndp->ni_vp;
 
-	printf("Device exist_2\n");
+	VBOXVFS_DEBUG(0, "Device exist_2\n");
 	if (vn_isdisk(devvp, &error) == 0) {
 		vput(devvp);
 		return (error);
 	}
 
-	printf("Device exist_3\n");
+	VBOXVFS_DEBUG(0, "Device exist_3\n");
 	/* Check the access rights on the mount device */
 	error = VOP_ACCESS(devvp, VREAD, td->td_ucred, td);
 	if (error)
@@ -234,7 +236,7 @@ static int vboxfs_mount(struct mount *mp)
 		return (error);
 	}
 
-	printf("Device exist_4\n");
+	VBOXVFS_DEBUG(0, "Device exist_4\n");
 	dev = devvp->v_rdev;
 	dev_ref(dev);
 	DROP_GIANT();
@@ -274,7 +276,7 @@ static int vboxfs_mount(struct mount *mp)
     	vfs_getnewfsid(mp);
     	vfs_mountedfrom(mp, share_name);
 
-    	printf("%s: Leave error=0\n", __FUNCTION__);
+	VBOXVFS_DEBUG(0, "%s: Leave error=0\n", __FUNCTION__);
 
     	return (0);
 bail:

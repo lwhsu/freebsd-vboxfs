@@ -81,9 +81,18 @@ MALLOC_DECLARE(M_VBOXVFS);
 
 #include "../../common/VBoxGuestLib/SysHlp.h"
 #include "../../common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.h"
+
 #include <sys/mount.h>
 #include <sys/vnode.h> 
 #include <sys/_timespec.h>
+
+#define	VBOXVFS_DEBUG(lvl, ...)	do {					\
+	if (vboxvfs_debug >= (lvl)) {					\
+		printf("VBOXVFS[%u]: ", lvl);				\
+		printf(__VA_ARGS__);					\
+		printf("\n");						\
+	}								\
+} while (0)
 
 /*
  * representation of an active mount point
