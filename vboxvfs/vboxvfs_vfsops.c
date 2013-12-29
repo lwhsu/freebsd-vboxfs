@@ -86,7 +86,7 @@ static int vboxfs_cmount(struct mntarg *ma, void *data, uint64_t flags)
     	struct vboxfs_mount_info args;
     	int error = 0;
 
-    	printf("%s: Enter\n", __FUNCTION__);
+	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
 	
 	if (data == NULL)
 		     return (EINVAL);
@@ -102,7 +102,7 @@ static int vboxfs_cmount(struct mntarg *ma, void *data, uint64_t flags)
 
     	error = kernel_mount(ma, flags);
 
-    	printf("%s: Leave error=%d\n", __FUNCTION__, error);
+	VBOXVFS_DEBUG(0, "%s: Leave error=%d", __FUNCTION__, error);
 
     	return (error);
 };
@@ -295,6 +295,7 @@ bail:
 	}
 	dev_rel(dev);
 	vrele(devvp);
+	VBOXVFS_DEBUG(0, "%s: Leave error=%d", __FUNCTION__, error);
 	return error;
 };
 
@@ -346,7 +347,12 @@ static int vboxfs_unmount(struct mount *mp, int mntflags)
 
 static int vboxfs_root(struct mount *mp, int flags, struct vnode **vpp)
 {
+
+	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
+
 	ino_t id = 1;
+
+	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
 
 	return (vboxfs_vget(mp, id, flags, vpp));	
 }
@@ -359,6 +365,8 @@ vboxfs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 	struct vnode *vp;
 	struct vboxfs_node *unode;
 	int error;
+
+	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
 
 	error = vfs_hash_get(mp, ino, flags, curthread, vpp, NULL, NULL);
 	if (error || *vpp != NULL)
@@ -421,6 +429,8 @@ vboxfs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 
 	*vpp = vp;
 
+	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
+
 	return (0);
 }
 
@@ -429,6 +439,7 @@ vboxfs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
  */
 static int vboxfs_quotactl(struct mount *mp, int cmd, uid_t uid, void *arg)
 {
+	VBOXVFS_DEBUG(0, "%s", __FUNCTION__);
     	return (EOPNOTSUPP);
 }
 
@@ -438,6 +449,8 @@ static int vboxfs_quotactl(struct mount *mp, int cmd, uid_t uid, void *arg)
 static int vboxfs_init(struct vfsconf *vfsp)
 {
 	int rc = -1;
+
+	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
 
 	/* Initialize the R0 guest library. */
     	rc = vboxInit();
@@ -489,6 +502,7 @@ static int vboxfs_init(struct vfsconf *vfsp)
                                                   "error=%d\n", error);
         }
 #endif
+	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
     	return (0);
 }
 
@@ -497,12 +511,17 @@ static int vboxfs_init(struct vfsconf *vfsp)
  */
 static int vboxfs_uninit(struct vfsconf *vfsp)
 {
+
+	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
+
     	vboxDisconnect(&g_vboxSFClient);
     	vboxUninit();
 	/*
 	 * close connection to the provider
 	 */
 	//sfprov_disconnect(sfprov);
+
+	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
 
     	return (0);
 }
@@ -516,6 +535,8 @@ static int vboxfs_statfs(struct mount *mp, struct statfs *sbp)
         sffs_fsinfo_t fsinfo;
 //        dev32_t d32;
         int error;
+
+	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
 
 	vboxfsmp = VFSTOVBOXFS(mp);
 
@@ -537,6 +558,8 @@ static int vboxfs_statfs(struct mount *mp, struct statfs *sbp)
         sbp->f_fsid = d32;
 #endif
         sbp->f_namemax = fsinfo.maxnamesize;
+
+	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
 
         return (0);
 }
