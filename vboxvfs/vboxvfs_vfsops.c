@@ -212,6 +212,8 @@ static int vboxfs_mount(struct mount *mp)
 	if (share_name == NULL)
 		return (EINVAL);
 
+	VBOXVFS_DEBUG(0, "share_name: [%s]", share_name);
+
 	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, share_name, td);
 	VBOXVFS_DEBUG(0, "Device exist_0 %d", namei(ndp));
 	if ((error = namei(ndp)))
