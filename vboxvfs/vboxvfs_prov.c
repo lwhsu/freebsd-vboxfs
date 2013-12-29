@@ -47,6 +47,8 @@
 
 static VBSFCLIENT vbox_client;
 
+extern u_int vboxvfs_debug;
+
 static int sfprov_vbox2errno(int rc)
 {
 	if (rc == VERR_ACCESS_DENIED)
@@ -126,6 +128,9 @@ sfprov_mount(char *path, sfp_mount_t **mnt)
 	SHFLSTRING *str;
 	int size;
 	int error;
+
+	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
+	VBOXVFS_DEBUG(0, "%s: path: [%s]", __FUNCTION__, path);
 
 	m = malloc(sizeof (*m),  M_VBOXVFS, M_WAITOK | M_ZERO);
 	str = sfprov_string(path, &size);
