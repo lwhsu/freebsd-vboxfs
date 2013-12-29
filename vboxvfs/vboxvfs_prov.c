@@ -155,7 +155,7 @@ sfprov_unmount(sfp_mount_t *mnt)
 
 	rc = vboxCallUnmapFolder(&vbox_client, &mnt->map);
 	if (RT_FAILURE(rc)) {
-		printf("sfprov_mount: vboxCallUnmapFolder() failed rc=%d\n", rc);
+		printf("sfprov_unmount: vboxCallUnmapFolder() failed rc=%d\n", rc);
 		rc = EINVAL;
 	} else {
 		rc = 0;
