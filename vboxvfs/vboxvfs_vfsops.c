@@ -193,10 +193,11 @@ static int vboxfs_mount(struct mount *mp)
 	/*
          * Invoke Hypervisor mount interface before proceeding
          */
-        //error = sfprov_mount(share_name, &handle);
-      // if (error) {
-          //      return (error);
-	//}
+	error = sfprov_mount(share_name, &handle);
+	VBOXVFS_DEBUG(0, "sfprov_mount: error = %d", error);
+	if (error) {
+		return (error);
+	}
 
     	mp->mnt_data = handle;
 
@@ -479,7 +480,7 @@ static int vboxfs_init(struct vfsconf *vfsp)
     	}
 
     	printf("Successfully loaded shared folder module %d\n", vboxfs_version);
-#if 0
+
 	int error;
 
         printf("vboxfs_init()\n");
@@ -501,7 +502,7 @@ static int vboxfs_init(struct vfsconf *vfsp)
                 printf("sffs_init: host unable to show symlinks, "
                                                   "error=%d\n", error);
         }
-#endif
+
 	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
     	return (0);
 }
@@ -519,7 +520,7 @@ static int vboxfs_uninit(struct vfsconf *vfsp)
 	/*
 	 * close connection to the provider
 	 */
-	//sfprov_disconnect(sfprov);
+	sfprov_disconnect(sfprov);
 
 	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
 
