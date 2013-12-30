@@ -45,7 +45,7 @@ MALLOC_DEFINE(M_VBOXVFS, "vboxvfs", "VBOX VFS");
 #endif
 
 static int vboxfs_version = VBOXVFS_VERSION;
-static u_int vboxvfs_debug = 0;
+static u_int vboxvfs_debug = 1;
 
 SYSCTL_NODE(_vfs, OID_AUTO, vboxfs, CTLFLAG_RW, 0, "VirtualBox shared filesystem");
 SYSCTL_INT(_vfs_vboxfs, OID_AUTO, version, CTLFLAG_RD, &vboxfs_version, 0, "");
