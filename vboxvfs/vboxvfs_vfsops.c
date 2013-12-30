@@ -86,7 +86,7 @@ static int vboxfs_cmount(struct mntarg *ma, void *data, uint64_t flags)
     	struct vboxfs_mount_info args;
     	int error = 0;
 
-	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 	
 	if (data == NULL)
 		     return (EINVAL);
@@ -102,7 +102,7 @@ static int vboxfs_cmount(struct mntarg *ma, void *data, uint64_t flags)
 
     	error = kernel_mount(ma, flags);
 
-	VBOXVFS_DEBUG(0, "%s: Leave error=%d", __FUNCTION__, error);
+	VBOXVFS_DEBUG(1, "%s: Leave error=%d", __FUNCTION__, error);
 
     	return (error);
 };
@@ -131,7 +131,7 @@ static int vboxfs_mount(struct mount *mp)
 	uid_t uid = 0;
 	gid_t gid = 0;
 
-	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 
     	if (mp->mnt_flag & (MNT_UPDATE | MNT_ROOTFS))
         	return (EOPNOTSUPP);
@@ -194,7 +194,7 @@ static int vboxfs_mount(struct mount *mp)
          * Invoke Hypervisor mount interface before proceeding
          */
 	error = sfprov_mount(share_name, &handle);
-	VBOXVFS_DEBUG(0, "sfprov_mount: error = %d", error);
+	VBOXVFS_DEBUG(1, "sfprov_mount: error = %d", error);
 	if (error) {
 		return (error);
 	}
@@ -213,23 +213,23 @@ static int vboxfs_mount(struct mount *mp)
 	if (share_name == NULL)
 		return (EINVAL);
 
-	VBOXVFS_DEBUG(0, "share_name: [%s]", share_name);
+	VBOXVFS_DEBUG(1, "share_name: [%s]", share_name);
 
 	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, share_name, td);
-	VBOXVFS_DEBUG(0, "Device exist_0 %d", namei(ndp));
+	VBOXVFS_DEBUG(1, "Device exist_0 %d", namei(ndp));
 	if ((error = namei(ndp)))
 		return (error);
-	VBOXVFS_DEBUG(0, "Device exist_1");
+	VBOXVFS_DEBUG(1, "Device exist_1");
 	NDFREE(ndp, NDF_ONLY_PNBUF);
 	devvp = ndp->ni_vp;
 
-	VBOXVFS_DEBUG(0, "Device exist_2");
+	VBOXVFS_DEBUG(1, "Device exist_2");
 	if (vn_isdisk(devvp, &error) == 0) {
 		vput(devvp);
 		return (error);
 	}
 
-	VBOXVFS_DEBUG(0, "Device exist_3");
+	VBOXVFS_DEBUG(1, "Device exist_3");
 	/* Check the access rights on the mount device */
 	error = VOP_ACCESS(devvp, VREAD, td->td_ucred, td);
 	if (error)
@@ -239,7 +239,7 @@ static int vboxfs_mount(struct mount *mp)
 		return (error);
 	}
 
-	VBOXVFS_DEBUG(0, "Device exist_4");
+	VBOXVFS_DEBUG(1, "Device exist_4");
 	dev = devvp->v_rdev;
 	dev_ref(dev);
 	DROP_GIANT();
@@ -279,7 +279,7 @@ static int vboxfs_mount(struct mount *mp)
     	vfs_getnewfsid(mp);
     	vfs_mountedfrom(mp, share_name);
 
-	VBOXVFS_DEBUG(0, "%s: Leave error=0", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Leave error=0", __FUNCTION__);
 
     	return (0);
 bail:
@@ -296,7 +296,7 @@ bail:
 	}
 	dev_rel(dev);
 	vrele(devvp);
-	VBOXVFS_DEBUG(0, "%s: Leave error=%d", __FUNCTION__, error);
+	VBOXVFS_DEBUG(1, "%s: Leave error=%d", __FUNCTION__, error);
 	return error;
 };
 
@@ -349,11 +349,11 @@ static int vboxfs_unmount(struct mount *mp, int mntflags)
 static int vboxfs_root(struct mount *mp, int flags, struct vnode **vpp)
 {
 
-	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 
 	ino_t id = 1;
 
-	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
 
 	return (vboxfs_vget(mp, id, flags, vpp));	
 }
@@ -367,7 +367,7 @@ vboxfs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 	struct vboxfs_node *unode;
 	int error;
 
-	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 
 	error = vfs_hash_get(mp, ino, flags, curthread, vpp, NULL, NULL);
 	if (error || *vpp != NULL)
@@ -430,7 +430,7 @@ vboxfs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 
 	*vpp = vp;
 
-	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
 
 	return (0);
 }
@@ -440,7 +440,7 @@ vboxfs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
  */
 static int vboxfs_quotactl(struct mount *mp, int cmd, uid_t uid, void *arg)
 {
-	VBOXVFS_DEBUG(0, "%s", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s", __FUNCTION__);
     	return (EOPNOTSUPP);
 }
 
@@ -451,7 +451,7 @@ static int vboxfs_init(struct vfsconf *vfsp)
 {
 	int rc = -1;
 
-	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 
 	/* Initialize the R0 guest library. */
     	rc = vboxInit();
@@ -503,7 +503,7 @@ static int vboxfs_init(struct vfsconf *vfsp)
                                                   "error=%d\n", error);
         }
 
-	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
     	return (0);
 }
 
@@ -513,7 +513,7 @@ static int vboxfs_init(struct vfsconf *vfsp)
 static int vboxfs_uninit(struct vfsconf *vfsp)
 {
 
-	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 
     	vboxDisconnect(&g_vboxSFClient);
     	vboxUninit();
@@ -522,7 +522,7 @@ static int vboxfs_uninit(struct vfsconf *vfsp)
 	 */
 	sfprov_disconnect(sfprov);
 
-	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
 
     	return (0);
 }
@@ -537,7 +537,7 @@ static int vboxfs_statfs(struct mount *mp, struct statfs *sbp)
 //        dev32_t d32;
         int error;
 
-	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 
 	vboxfsmp = VFSTOVBOXFS(mp);
 
@@ -560,7 +560,7 @@ static int vboxfs_statfs(struct mount *mp, struct statfs *sbp)
 #endif
         sbp->f_namemax = fsinfo.maxnamesize;
 
-	VBOXVFS_DEBUG(0, "%s: Leave", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
 
         return (0);
 }

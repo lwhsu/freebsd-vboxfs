@@ -129,8 +129,8 @@ sfprov_mount(char *path, sfp_mount_t **mnt)
 	int size;
 	int error;
 
-	VBOXVFS_DEBUG(0, "%s: Enter", __FUNCTION__);
-	VBOXVFS_DEBUG(0, "%s: path: [%s]", __FUNCTION__, path);
+	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
+	VBOXVFS_DEBUG(1, "%s: path: [%s]", __FUNCTION__, path);
 
 	m = malloc(sizeof (*m),  M_VBOXVFS, M_WAITOK | M_ZERO);
 	str = sfprov_string(path, &size);
