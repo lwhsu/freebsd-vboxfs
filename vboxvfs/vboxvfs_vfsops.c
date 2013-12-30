@@ -126,7 +126,7 @@ static int vboxfs_mount(struct mount *mp)
 	sfp_mount_t *handle;
     	int error, share_len;
     	char *share_name;
-   	mode_t file_mode, dir_mode;
+   	mode_t file_mode = 0, dir_mode = 0;
 	char *tmp, *ep;
 	uid_t uid = 0;
 	gid_t gid = 0;
