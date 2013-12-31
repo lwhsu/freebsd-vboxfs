@@ -190,17 +190,6 @@ static int vboxfs_mount(struct mount *mp)
         vboxfsmp->sf_fmode = file_mode;
         vboxfsmp->sf_dmode = dir_mode;
 
-	/*
-         * Invoke Hypervisor mount interface before proceeding
-         */
-	error = sfprov_mount(share_name, &handle);
-	VBOXVFS_DEBUG(1, "sfprov_mount: error = %d", error);
-	if (error) {
-		return (error);
-	}
-
-    	mp->mnt_data = handle;
-
     	error = vfs_getopt(opts, "from", (void **)&share_name, &share_len);
 
     	if (error || share_name[share_len - 1] != '\0' || share_len > 0xfffe)
@@ -212,6 +201,17 @@ static int vboxfs_mount(struct mount *mp)
 	/* Check that the mount device exists */
 	if (share_name == NULL)
 		return (EINVAL);
+
+	/*
+         * Invoke Hypervisor mount interface before proceeding
+         */
+	error = sfprov_mount(share_name, &handle);
+	VBOXVFS_DEBUG(1, "sfprov_mount: error = %d", error);
+	if (error) {
+		return (error);
+	}
+
+	mp->mnt_data = handle;
 
 	VBOXVFS_DEBUG(1, "share_name: [%s]", share_name);
 
