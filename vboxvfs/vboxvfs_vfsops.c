@@ -449,41 +449,9 @@ static int vboxfs_quotactl(struct mount *mp, int cmd, uid_t uid, void *arg)
  */
 static int vboxfs_init(struct vfsconf *vfsp)
 {
-	int rc = -1;
-
-	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
-
-	/* Initialize the R0 guest library. */
-    	rc = vboxInit();
-    	if (RT_FAILURE(rc))
-	{
-		printf("vboxInit failed rc=%d\n", rc);
-        	return (EPROTO);
-	}
-
-    	/* Connect to the host service. */
-    	rc = vboxConnect(&g_vboxSFClient);
-    	if (RT_FAILURE(rc))
-    	{
-        	printf("Failed to get connection to host! rc=%d\n", rc);
-        	vboxUninit();
-        	return (EPROTO);
-    	} 
-
-    	rc = vboxCallSetUtf8(&g_vboxSFClient);
-    	if (RT_FAILURE (rc))
-    	{
-        	printf("vboxCallSetUtf8 failed, rc=%d\n", rc);
-        	vboxDisconnect(&g_vboxSFClient);
-        	vboxUninit();
-       		return (EPROTO);
-    	}
-
-    	printf("Successfully loaded shared folder module %d\n", vboxfs_version);
-
 	int error;
 
-        printf("vboxfs_init()\n");
+	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 
         /*
          * This may seem a silly way to do things for now. But the code
@@ -515,8 +483,6 @@ static int vboxfs_uninit(struct vfsconf *vfsp)
 
 	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 
-    	vboxDisconnect(&g_vboxSFClient);
-    	vboxUninit();
 	/*
 	 * close connection to the provider
 	 */
