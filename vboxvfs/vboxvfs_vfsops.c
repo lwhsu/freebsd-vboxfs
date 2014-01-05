@@ -263,8 +263,12 @@ static int vboxfs_mount(struct mount *mp)
 	mp->mnt_stat.f_fsid.val[1] = mp->mnt_vfc->vfc_typenum;
 	MNT_ILOCK(mp);
 	mp->mnt_flag |= MNT_LOCAL;
+#if __FreeBSD_version >= 1000021
+	mp->mnt_kern_flag |= MNTK_LOOKUP_SHARED | MNTK_EXTENDED_SHARED;
+#else
 	mp->mnt_kern_flag |= MNTK_MPSAFE | MNTK_LOOKUP_SHARED |
 	    MNTK_EXTENDED_SHARED;
+#endif
 	MNT_IUNLOCK(mp);
 	vboxfsmp->sf_vfsp = mp;
 	vboxfsmp->sf_dev = dev;
