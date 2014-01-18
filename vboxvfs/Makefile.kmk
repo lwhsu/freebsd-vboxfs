@@ -46,17 +46,20 @@ vboxvfs_CLEAN        += $(vboxvfs_DEPS)
 
 VBOX_AWK := /usr/bin/awk
 
-$$(vboxvfs_0_OUTDIR)/vnode_if.h: $(VBOX_FREEBSD_SRC)/kern/vnode_if.src
+$$(vboxvfs_0_OUTDIR):
+	$(QUIET)$(MKDIR) -p $(vboxvfs_0_OUTDIR)
+
+$$(vboxvfs_0_OUTDIR)/vnode_if.h: $$(vboxvfs_0_OUTDIR) $(VBOX_FREEBSD_SRC)/kern/vnode_if.src
 	$(call MSG_TOOL,awk,VBoxGuest,$<,$@)
 	$(QUIET)$(VBOX_AWK) -f $(VBOX_FREEBSD_SRC)/tools/vnode_if.awk $(VBOX_FREEBSD_SRC)/kern/vnode_if.src -h
 	$(QUIET)$(MV) vnode_if.h $(vboxvfs_0_OUTDIR)/vnode_if.h
 
-$$(vboxvfs_0_OUTDIR)/vnode_if_newproto.h: $(VBOX_FREEBSD_SRC)/kern/vnode_if.src
+$$(vboxvfs_0_OUTDIR)/vnode_if_newproto.h: $$(vboxvfs_0_OUTDIR) $(VBOX_FREEBSD_SRC)/kern/vnode_if.src
 	$(call MSG_TOOL,awk,VBoxGuest,$<,$@)
 	$(QUIET)$(VBOX_AWK) -f $(VBOX_FREEBSD_SRC)/tools/vnode_if.awk $(VBOX_FREEBSD_SRC)/kern/vnode_if.src -p
 	$(QUIET)$(MV) vnode_if_newproto.h $(vboxvfs_0_OUTDIR)/vnode_if_newproto.h
 
-$$(vboxvfs_0_OUTDIR)/vnode_if_typedef.h: $(VBOX_FREEBSD_SRC)/kern/vnode_if.src
+$$(vboxvfs_0_OUTDIR)/vnode_if_typedef.h: $$(vboxvfs_0_OUTDIR) $(VBOX_FREEBSD_SRC)/kern/vnode_if.src
 	$(call MSG_TOOL,awk,VBoxGuest,$<,$@)
 	$(QUIET)$(VBOX_AWK) -f $(VBOX_FREEBSD_SRC)/tools/vnode_if.awk $(VBOX_FREEBSD_SRC)/kern/vnode_if.src -q
 	$(QUIET)$(MV) vnode_if_typedef.h $(vboxvfs_0_OUTDIR)/vnode_if_typedef.h
