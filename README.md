@@ -5,7 +5,7 @@ To build:
 
 ```sh
 cp -R $(freebsd-vboxsf)/mount_vboxfs /usr/src/sbin
-cd /usr/src/sbin && make install
+cd /usr/src/sbin/mount_vboxfs && make install
 
 cp $(freebsd-vboxsf)/patch-src-VBox-Additions-freebsd-Makefile.kmk /usr/ports/emulators/virtualbox-ose-additions/files
 
