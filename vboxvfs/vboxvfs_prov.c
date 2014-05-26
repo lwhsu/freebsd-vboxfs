@@ -994,8 +994,8 @@ sfprov_readdir(
 			size = offsetof (SHFLDIRINFO, name.String) + info->name.u16Size;
 			info = (SHFLDIRINFO *) ((uintptr_t) info + size);
 		}
-		CTASSERT(nents == 0);
-		CTASSERT((char *) info == (char *) infobuff + numbytes);
+		KASSERT(nents == 0, ("nents != 0"));
+		KASSERT((char *) info == (char *) infobuff + numbytes, "(char *) info != (char *) infobuff + numbytes");
 
 		if (error == VERR_NO_MORE_FILES)
 			break;
