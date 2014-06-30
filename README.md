@@ -1,6 +1,19 @@
 freebsd-vboxfs
 ==============
 
+To setup development environment quickly:
+```sh
+cd /usr/ports/emulators/virtualbox-ose-additions
+(optional) make config; unselect "X11"
+make all-depends-list | awk -F/ '{print $5}' > /tmp/vbox-addon-depends
+pkg install `cat /tmp/vbox-addon-depends`
+edit /tmp/vbox-addon-depends, remove/modify error entries from last command:
+  perl5.16 -> perl5
+  gcc-ecj45 -> gcc-ecj
+  delete indexinfo
+pkg install `cat /tmp/vbox-addon-depends`
+```
+
 To build:
 
 ```sh
