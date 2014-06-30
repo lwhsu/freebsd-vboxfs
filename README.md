@@ -27,5 +27,5 @@ make patch
 rm -fr `make -V WRKSRC`/src/VBox/Additions/freebsd/vboxvfs
 cp -R $(freebsd-vboxsf)/vboxvfs `make -V WRKSRC`/src/VBox/Additions/freebsd
 
-make install
+make
 ```
