@@ -34,8 +34,8 @@ To test: (currently does not work)
 ```sh
 cd /usr/ports/emulators/virtualbox-ose-additions
 cd `make -V WRKSRC`
-kldload ./VirtualBox-4.3.12/out/freebsd.amd64/release/bin/additions/vboxguest.ko
-kldload ./VirtualBox-4.3.12/out/freebsd.amd64/release/bin/additions/vboxvfs.ko
+kldload ./out/freebsd.amd64/release/bin/additions/vboxguest.ko
+kldload ./out/freebsd.amd64/release/bin/additions/vboxvfs.ko
 
 mount_vboxfs -w shared_folder_name /mnt
 ```
