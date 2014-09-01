@@ -53,7 +53,6 @@ SYSCTL_UINT(_vfs_vboxfs, OID_AUTO, debug, CTLFLAG_RW, &vboxvfs_debug, 0, "Debug 
 
 /* global connection to the host service. */
 static VBSFCLIENT g_vboxSFClient;
-static sfp_connection_t *sfprov = NULL;
 
 static vfs_init_t       vboxfs_init;
 static vfs_uninit_t     vboxfs_uninit;
@@ -463,17 +462,21 @@ static int vboxfs_init(struct vfsconf *vfsp)
          * which would have a different implementation of the provider.
          * Hopefully that'll never happen. :)
          */
+	/*
         sfprov = sfprov_connect(SFPROV_VERSION);
         if (sfprov == NULL) {
                 printf("vbox_init: couldn't init sffs provider");
                 return (ENODEV);
         }
+	 * */
 
+	/*
         error = sfprov_set_show_symlinks();
         if (error != 0) {
                 printf("sffs_init: host unable to show symlinks, "
                                                   "error=%d\n", error);
         }
+	 * */
 
 	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
     	return (0);
@@ -490,7 +493,8 @@ static int vboxfs_uninit(struct vfsconf *vfsp)
 	/*
 	 * close connection to the provider
 	 */
-	sfprov_disconnect(sfprov);
+	//sfprov_disconnect(sfprov);
+	sfprov_disconnect();
 
 	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
 
