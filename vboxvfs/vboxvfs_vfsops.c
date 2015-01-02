@@ -54,7 +54,7 @@ SYSCTL_INT(_vfs_vboxfs, OID_AUTO, version, CTLFLAG_RD, &vboxfs_version, 0, "");
 SYSCTL_UINT(_vfs_vboxfs, OID_AUTO, debug, CTLFLAG_RW, &vboxvfs_debug, 0, "Debug level");
 
 /* global connection to the host service. */
-static VBSFCLIENT g_vboxSFClient;
+//static VBSFCLIENT g_vboxSFClient;
 
 static vfs_init_t       vboxfs_init;
 static vfs_uninit_t     vboxfs_uninit;
@@ -115,7 +115,6 @@ static const char *vboxfs_opts[] = {
 static int vboxfs_mount(struct mount *mp)
 {
 	struct vboxfs_mnt *vboxfsmp = NULL; 
-	struct vboxfs_node *unode; 
 	struct buf *bp = NULL;
 	struct cdev *dev;
 	struct g_consumer *cp;

@@ -485,7 +485,7 @@ static int vboxfs_getattr(struct vop_getattr_args *ap)
         vap->va_blocksize = 512;
    	vap->va_bytes = (np->sf_stat.sf_alloc + 511) / 512;	/* bytes of disk space held by file */
 
-done:
+//done:
         return (error);
 }
 
@@ -684,7 +684,7 @@ static int vboxfs_readdir(struct vop_readdir_args *ap)
         struct sffs_dirent *dirent = NULL;
         sffs_dirents_t *cur_buf;
         off_t offset = 0;
-        off_t orig_off = uio->uio_offset;
+        //off_t orig_off = uio->uio_offset;
         int error = 0;
 #if 0
         if (uio->uio_iovcnt != 1)
@@ -821,7 +821,7 @@ static int vboxfs_print (struct vop_print_args *ap)
 
 static int vboxfs_pathconf (struct vop_pathconf_args *ap)
 {
-	struct vnode 		*vp = ap->a_vp;
+	//struct vnode 		*vp = ap->a_vp;
         register_t *retval = ap->a_retval;
         int error = 0;
 
@@ -1040,9 +1040,9 @@ vboxfs_lookup(struct vop_lookup_args /* {
 	struct 	vboxfs_mnt *vboxfsmp = node->vboxfsmp;
 	u_long  nameiop = cnp->cn_nameiop;
 	u_long 	flags = cnp->cn_flags;
-	long 	namelen;
+	//long 	namelen;
 	ino_t 	id = 0;
-	int 	ltype, offset = 0, error = 0;
+	int 	ltype, error = 0;
 	int 	lkflags = cnp->cn_lkflags;	
 
         /*

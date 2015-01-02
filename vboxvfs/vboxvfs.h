@@ -36,6 +36,7 @@
 MALLOC_DECLARE(M_VBOXVFS);
 
 #ifdef _KERNEL
+#ifndef FREEBSD_STYLE
 #include "../../../../../include/iprt/nocrt/limits.h"
 #include "../../../../../include/iprt/alloc.h"
 #include "../../../../../include/iprt/asm.h"
@@ -81,6 +82,56 @@ MALLOC_DECLARE(M_VBOXVFS);
 
 #include "../../common/VBoxGuestLib/SysHlp.h"
 #include "../../common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.h"
+
+#else
+
+#include "iprt/nocrt/limits.h"
+#include "iprt/alloc.h"
+#include "iprt/asm.h"
+#include "iprt/asm-amd64-x86.h"
+#include "iprt/asm-math.h"
+#include "iprt/assert.h"
+#include "iprt/cdefs.h"
+#include "iprt/err.h"
+#include "iprt/fs.h"
+#include "iprt/log.h"
+//#include "iprt/mangling.h"
+#include "iprt/mem.h"
+#include "iprt/param.h"
+#include "iprt/path.h"
+#include "iprt/semaphore.h"
+#include "iprt/stdarg.h"
+#include "iprt/stdint.h"
+#include "iprt/string.h"
+#include "iprt/time.h"
+#include "iprt/types.h"
+#include "iprt/uni.h"
+#include "iprt/nocrt/limits.h"
+#include "iprt/alloc.h"
+#include "iprt/asm.h"
+#include "iprt/asm-amd64-x86.h"
+#include "iprt/asm-math.h"
+#include "iprt/assert.h"
+#include "iprt/cdefs.h"
+#include "iprt/err.h"
+#include "iprt/fs.h"
+#include "iprt/log.h"
+//#include "iprt/mangling.h"
+#include "iprt/mem.h"
+#include "iprt/param.h"
+#include "iprt/path.h"
+#include "iprt/semaphore.h"
+#include "iprt/stdarg.h"
+#include "iprt/stdint.h"
+#include "iprt/string.h"
+#include "iprt/time.h"
+#include "iprt/types.h"
+#include "iprt/uni.h"
+
+#include "common/VBoxGuestLib/SysHlp.h"
+#include "common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.h"
+
+#endif /* !FREEBSD_STYLE */
 
 #include <sys/mount.h>
 #include <sys/vnode.h> 
