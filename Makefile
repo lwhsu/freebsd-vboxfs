@@ -57,8 +57,8 @@ syssetup:
 portsetup:
 	cp -f ${.CURDIR}/patch-src-VBox-Additions-freebsd-Makefile.kmk \
 		${PORTPATH}/files
-	cd ${PORTPATH} && ${MAKE} BATCH=1 patch && \
-		cp -R ${.CURDIR}/vboxvfs `${MAKE} -V WRKSRC`/${VBOXVFS} && \
+	cd ${PORTPATH} && ${MAKE} BATCH=1 clean patch && \
+		cp -R ${.CURDIR}/vboxvfs/ `${MAKE} -V WRKSRC`/${VBOXVFS} && \
 		${MAKE} build
 
 # (Re-)Generate the cscope database, storing them in the source directory.
@@ -74,7 +74,7 @@ cscope:
 build:
 	cd ${PORTPATH} && \
 		WRKSRC=`make -V WRKSRC` && \
-		cp -R ${.CURDIR}/vboxvfs $$WRKSRC/${VBOXVFS} && \
+		cp -R ${.CURDIR}/vboxvfs/ $$WRKSRC/${VBOXVFS} && \
 		cd $$WRKSRC/${VBOXVFS} && kmk BUILD_TYPE=debug
 
 # Load the module from the build.
