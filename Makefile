@@ -52,15 +52,13 @@ syssetup:
 # Set up the port directory so we can make changes here and have them be
 # reflected in the port.  The port just serves as a scaffolding to do the
 # full build, since this repository only has the work in progress code.
-# 
+#
 # Only do this step after syssetup is done.
 portsetup:
-	cp -f patch-src-VBox-Additions-freebsd-Makefile.kmk ${PORTPATH}/files
-	cd ${PORTPATH} && \
-		${MAKE} BATCH=1 clean patch && \
-		cd `${MAKE} -V WRKSRC`/${ADDITIONS} && \
-		rm -rf vboxvfs && \
-		ln -s ${.CURDIR}/vboxvfs vboxvfs &&
+	cp -f ${.CURDIR}/patch-src-VBox-Additions-freebsd-Makefile.kmk \
+		${PORTPATH}/files
+	cd ${PORTPATH} && ${MAKE} BATCH=1 patch && \
+		cp -R ${.CURDIR}/vboxvfs `${MAKE} -V WRKSRC`/${VBOXVFS} && \
 		${MAKE} build
 
 # (Re-)Generate the cscope database, storing them in the source directory.
@@ -74,12 +72,14 @@ cscope:
 
 # Do the build.  Only do this step after portsetup is done.
 build:
-	cd ${PORTPATH} && cd `${MAKE} -V WRKSRC`/${VBOXVFS} && \
-		kmk BUILD_TYPE=debug
+	cd ${PORTPATH} && \
+		WRKSRC=`make -V WRKSRC` && \
+		cp -R ${.CURDIR}/vboxvfs $$WRKSRC/${VBOXVFS} && \
+		cd $$WRKSRC/${VBOXVFS} && kmk BUILD_TYPE=debug
 
 # Load the module from the build.
 kldload:
-	cd ${PORTPATH} && cd `${MAKE} -V WRKSRC` && \
+	cd `${MAKE} -C ${PORTPATH} -V WRKSRC` && \
 		kldload ./out/freebsd.amd64/debug/bin/additions/vboxvfs.ko
 
 # Unload the module, for completeness' sake.
