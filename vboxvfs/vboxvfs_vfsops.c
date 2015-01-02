@@ -44,6 +44,8 @@
 MALLOC_DEFINE(M_VBOXVFS, "vboxvfs", "VBOX VFS");
 #endif
 
+static sfp_connection_t *sfprov = NULL;
+
 static int vboxfs_version = VBOXVFS_VERSION;
 static u_int vboxvfs_debug = 1;
 
@@ -448,7 +450,7 @@ static int vboxfs_quotactl(struct mount *mp, int cmd, uid_t uid, void *arg)
 }
 
 /*
- * Initialize the filesystem.
+ * Initialize the filesystem globals.
  */
 static int vboxfs_init(struct vfsconf *vfsp)
 {
@@ -456,27 +458,17 @@ static int vboxfs_init(struct vfsconf *vfsp)
 
 	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 
-        /*
-         * This may seem a silly way to do things for now. But the code
-         * is structured to easily allow it to be used on other hypervisors
-         * which would have a different implementation of the provider.
-         * Hopefully that'll never happen. :)
-         */
-	/*
         sfprov = sfprov_connect(SFPROV_VERSION);
         if (sfprov == NULL) {
-                printf("vbox_init: couldn't init sffs provider");
+                printf("%s: couldn't connect to sf provider", __func__);
                 return (ENODEV);
         }
-	 * */
 
-	/*
         error = sfprov_set_show_symlinks();
         if (error != 0) {
-                printf("sffs_init: host unable to show symlinks, "
-                                                  "error=%d\n", error);
+                printf("%s: host unable to show symlinks, error=%d\n",
+		    __func__, error);
         }
-	 * */
 
 	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
     	return (0);
@@ -493,7 +485,6 @@ static int vboxfs_uninit(struct vfsconf *vfsp)
 	/*
 	 * close connection to the provider
 	 */
-	//sfprov_disconnect(sfprov);
 	sfprov_disconnect();
 
 	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);

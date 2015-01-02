@@ -278,8 +278,7 @@ int vboxfs_vget(struct mount *, ino_t, int, struct vnode **);
 typedef struct sfp_connection sfp_connection_t;
 
 extern sfp_connection_t *sfprov_connect(int);
-//extern void sfprov_disconnect(sfp_connection_t *);
-extern void sfprov_disconnect();
+extern void sfprov_disconnect(void);
 
 extern int sfprov_mount(char *, sfp_mount_t **);
 extern int sfprov_unmount(sfp_mount_t *);

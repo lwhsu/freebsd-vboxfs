@@ -47,9 +47,6 @@
 
 static VBSFCLIENT vbox_client;
 
-static u_int vboxvfs_connected = 0;
-
-static sfp_connection_t *sfprov = NULL;
 extern u_int vboxvfs_debug;
 
 static int sfprov_vbox2errno(int rc)
@@ -99,7 +96,6 @@ sfprov_connect(int version)
                         error = vboxCallSetUtf8(&vbox_client);
                         if (RT_SUCCESS(error))
                         {
-				vboxvfs_connected = 1;
                                 return ((sfp_connection_t *)&vbox_client);
                         }
                         else
@@ -119,8 +115,6 @@ sfprov_connect(int version)
 void
 sfprov_disconnect()
 {
-        if (sfprov != (sfp_connection_t *)&vbox_client)
-                printf("sfprov_disconnect: bad argument\n");
         vboxDisconnect(&vbox_client);
         vboxUninit();
 }
@@ -135,20 +129,6 @@ sfprov_mount(char *path, sfp_mount_t **mnt)
 
 	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 	VBOXVFS_DEBUG(1, "%s: path: [%s]", __FUNCTION__, path);
-
-	if (!vboxvfs_connected) {
-		sfprov = sfprov_connect(SFPROV_VERSION);
-		if (sfprov == NULL) {
-			printf("sfprov_mount: couldn't init sffs provider");
-			return (ENODEV);
-		}
-		error = sfprov_set_show_symlinks();
-		if (error != 0) {
-			printf("sffs_init: host unable to show symlinks, "
-					"error=%d\n", error);
-			return (EINVAL);
-		}
-	}
 
 	m = malloc(sizeof (*m),  M_VBOXVFS, M_WAITOK | M_ZERO);
 	str = sfprov_string(path, &size);
