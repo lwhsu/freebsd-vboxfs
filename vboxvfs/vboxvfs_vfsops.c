@@ -456,6 +456,7 @@ static int vboxfs_init(struct vfsconf *vfsp)
 	int error;
 
 	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
+	DROP_GIANT();
 
         sfprov = sfprov_connect(SFPROV_VERSION);
         if (sfprov == NULL) {
@@ -469,6 +470,7 @@ static int vboxfs_init(struct vfsconf *vfsp)
 		    __func__, error);
         }
 
+	PICKUP_GIANT();
 	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
     	return (0);
 }
@@ -480,14 +482,15 @@ static int vboxfs_uninit(struct vfsconf *vfsp)
 {
 
 	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
+	DROP_GIANT();
 
 	/*
 	 * close connection to the provider
 	 */
 	sfprov_disconnect();
 
+	PICKUP_GIANT();
 	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
-
     	return (0);
 }
 
