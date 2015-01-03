@@ -61,6 +61,16 @@ portsetup:
 		cp -R ${.CURDIR}/vboxvfs/ `${MAKE} -V WRKSRC`/${VBOXVFS} && \
 		${MAKE} build
 
+# Re-run the port build, if needed.
+portbuild:
+	cd ${PORTPATH} && \
+		rm -f `${MAKE} -V WRKDIR`/.build_done* && \
+		${MAKE} build
+
+portinstall:
+	cd ${PORTPATH} && rm -f `${MAKE} -V WRKDIR`/.install_done* && \
+		${MAKE} deinstall install
+
 # (Re-)Generate the cscope database, storing them in the source directory.
 # This will include all of the relevant VirtualBox source code and headers.
 cscope:
