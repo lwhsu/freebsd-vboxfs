@@ -353,11 +353,7 @@ static int vboxfs_unmount(struct mount *mp, int mntflags)
 static int vboxfs_root(struct mount *mp, int flags, struct vnode **vpp)
 {
 
-	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
-
 	ino_t id = 1;
-
-	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
 
 	return (vboxfs_vget(mp, id, flags, vpp));	
 }
@@ -455,7 +451,6 @@ static int vboxfs_init(struct vfsconf *vfsp)
 {
 	int error;
 
-	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 	DROP_GIANT();
 
         sfprov = sfprov_connect(SFPROV_VERSION);
@@ -471,7 +466,6 @@ static int vboxfs_init(struct vfsconf *vfsp)
         }
 
 	PICKUP_GIANT();
-	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
     	return (0);
 }
 
@@ -481,7 +475,6 @@ static int vboxfs_init(struct vfsconf *vfsp)
 static int vboxfs_uninit(struct vfsconf *vfsp)
 {
 
-	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 	DROP_GIANT();
 
 	/*
@@ -490,7 +483,6 @@ static int vboxfs_uninit(struct vfsconf *vfsp)
 	sfprov_disconnect();
 
 	PICKUP_GIANT();
-	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
     	return (0);
 }
 
@@ -503,8 +495,6 @@ static int vboxfs_statfs(struct mount *mp, struct statfs *sbp)
         sffs_fsinfo_t fsinfo;
 //        dev32_t d32;
         int error;
-
-	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 
 	vboxfsmp = VFSTOVBOXFS(mp);
 
@@ -526,8 +516,6 @@ static int vboxfs_statfs(struct mount *mp, struct statfs *sbp)
         sbp->f_fsid = d32;
 #endif
         sbp->f_namemax = fsinfo.maxnamesize;
-
-	VBOXVFS_DEBUG(1, "%s: Leave", __FUNCTION__);
 
         return (0);
 }
