@@ -64,10 +64,10 @@ portsetup:
 # (Re-)Generate the cscope database, storing them in the source directory.
 # This will include all of the relevant VirtualBox source code and headers.
 cscope:
-	cd ${PORTPATH} && WRKSRC=`${MAKE} -V WRKSRC` && cd ${.CURDIR} && \
-		cscope -bRq \
-		-s $$WRKSRC/src \
-		-s $$WRKSRC/include
+	cd ${PORTPATH} && WRKSRC=`${MAKE} -V WRKSRC` && \
+		mkdir -p .cscope && cd .cscope && \
+		cscope -bRq -s $$WRKSRC/src -s $$WRKSRC/include && \
+		mv cscope.* ${.CURDIR}
 
 # Do the build.  Only do this step after portsetup is done.
 build:
