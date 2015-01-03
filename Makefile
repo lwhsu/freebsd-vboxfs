@@ -66,7 +66,6 @@ portsetup:
 cscope:
 	cd ${PORTPATH} && WRKSRC=`${MAKE} -V WRKSRC` && cd ${.CURDIR} && \
 		cscope -bRq \
-		-s ${.CURDIR}/vboxvfs \
 		-s $$WRKSRC/src \
 		-s $$WRKSRC/include
 
