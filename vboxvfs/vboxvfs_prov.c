@@ -137,7 +137,7 @@ sfprov_mount(char *path, sfp_mount_t **mnt)
 		printf("sfprov_mount: vboxCallMapFolder() failed error=%d\n", error);
 		free(m, M_VBOXVFS);
 		*mnt = NULL;
-		error = EINVAL;
+		error = sfprov_vbox2errno(error);
 	} else {
 		*mnt = m;
 		error = 0;
@@ -154,7 +154,7 @@ sfprov_unmount(sfp_mount_t *mnt)
 	rc = vboxCallUnmapFolder(&vbox_client, &mnt->map);
 	if (RT_FAILURE(rc)) {
 		printf("sfprov_unmount: vboxCallUnmapFolder() failed rc=%d\n", rc);
-		rc = EINVAL;
+		rc = sfprov_vbox2errno(rc);
 	} else {
 		rc = 0;
 	}
@@ -176,7 +176,7 @@ sfprov_get_fsinfo(sfp_mount_t *mnt, sffs_fsinfo_t *fsinfo)
 	rc = vboxCallFSInfo(&vbox_client, &mnt->map, 0,
 	    (SHFL_INFO_GET | SHFL_INFO_VOLUME), &bytes, (SHFLDIRINFO *)&info);
 	if (RT_FAILURE(rc))
-		return (EINVAL);
+		return (sfprov_vbox2errno(rc));
 
 	fsinfo->blksize = info.ulBytesPerAllocationUnit;
 	fsinfo->blksused = (info.ullTotalAllocationBytes - info.ullAvailableAllocationBytes) / info.ulBytesPerAllocationUnit;
@@ -413,7 +413,7 @@ sfprov_trunc(sfp_mount_t *mnt, char *path)
 	free(str, M_VBOXVFS);
 
 	if (RT_FAILURE(rc)) {
-		return (EINVAL);
+		return (sfprov_vbox2errno(rc));
 	}
 	(void)vboxCallClose(&vbox_client, &mnt->map, parms.Handle);
 	return (0);
@@ -437,7 +437,7 @@ sfprov_read(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes)
 	rc = vboxCallRead(&vbox_client, &fp->map, fp->handle, offset,
 	    numbytes, (uint8_t *)buffer, 0);	/* what is that last arg? */
 	if (RT_FAILURE(rc))
-		return (EINVAL);
+		return (sfprov_vbox2errno(rc));
 	return (0);
 }
 
@@ -449,7 +449,7 @@ sfprov_write(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes)
 	rc = vboxCallWrite(&vbox_client, &fp->map, fp->handle, offset,
 	    numbytes, (uint8_t *)buffer, 0);	/* what is that last arg? */
 	if (RT_FAILURE(rc))
-		return (EINVAL);
+		return (sfprov_vbox2errno(rc));
 	return (0);
 }
 
@@ -460,7 +460,7 @@ sfprov_fsync(sfp_file_t *fp)
 
 	rc = vboxCallFlush(&vbox_client, &fp->map, fp->handle);
 	if (RT_FAILURE(rc))
-		return (EIO);
+		return (sfprov_vbox2errno(rc));
 	return (0);
 }
 
@@ -481,7 +481,7 @@ sfprov_getinfo(sfp_mount_t *mnt, char *path, PSHFLFSOBJINFO info)
 	free(str, M_VBOXVFS);
 
 	if (RT_FAILURE(rc))
-		return (EINVAL);
+		return (sfprov_vbox2errno(rc));
 	if (parms.Result != SHFL_FILE_EXISTS)
 		return (ENOENT);
 	*info = parms.Info;
@@ -605,7 +605,7 @@ sfprov_set_attr(
 	if (RT_FAILURE(rc)) {
 		printf("sfprov_set_attr: vboxCallCreate(%s) failed rc=%d\n",
 		    path, rc);
-		err = EINVAL;
+		err = sfprov_vbox2errno(rc);
 		goto fail2;
 	}
 	if (parms.Result != SHFL_FILE_EXISTS) {
@@ -672,7 +672,7 @@ sfprov_set_size(sfp_mount_t *mnt, char *path, uint64_t size)
 	if (RT_FAILURE(rc)) {
 		printf("sfprov_set_size: vboxCallCreate(%s) failed rc=%d\n",
 		    path, rc);
-		err = EINVAL;
+		err = sfprov_vbox2errno(rc);
 		goto fail2;
 	}
 	if (parms.Result != SHFL_FILE_EXISTS) {
