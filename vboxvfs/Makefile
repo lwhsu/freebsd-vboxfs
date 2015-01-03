@@ -1,6 +1,7 @@
 # $FreeBSD$
 
 VBOXROOT?=	${.CURDIR}/../../vboxwrksrc
+LIBADDITIONS?=	${VBOXROOT}/out/freebsd.amd64/debug/lib/additions
 
 KMOD=	vboxvfs
 
@@ -27,3 +28,6 @@ CFLAGS+=	-DDEBUG -DRT_OS_FREEBSD -D__FREEBSD__ -DRT_ARCH_AMD64 \
 		-DIN_GUEST -DIN_GUEST_R0 -DVBOX_WITH_HGCM
 
 .include <bsd.kmod.mk>
+
+OBJS+=	${LIBADDITIONS}/VBoxGuestR0Lib.a \
+	${LIBADDITIONS}/RuntimeGuestR0.a
