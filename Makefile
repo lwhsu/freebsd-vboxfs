@@ -68,7 +68,7 @@ portbuild:
 		${MAKE} build
 
 portinstall:
-	cd ${PORTPATH} && rm -f `${MAKE} -V WRKDIR`/.install_done* && \
+	cd ${PORTPATH} && rm -f `${MAKE} -V WRKDIR`/.{stage,install}_done* && \
 		${MAKE} deinstall install
 
 # (Re-)Generate the cscope database, storing them in the source directory.
@@ -93,4 +93,4 @@ kldload:
 
 # Unload the module, for completeness' sake.
 kldunload:
-	kldunload vboxvfs.ko
+	-kldunload vboxvfs.ko
