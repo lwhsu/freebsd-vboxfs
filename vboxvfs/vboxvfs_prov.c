@@ -37,6 +37,13 @@
 #include <sys/mount.h>
 #include <sys/vnode.h>
 #include <sys/dirent.h>
+#include <sys/proc.h>
+#include <vm/vm.h>
+#include <vm/pmap.h>
+#include <vm/vm_kern.h>
+#include <vm/vm_map.h>
+#include <vm/vm_object.h>
+#include <vm/vm_extern.h>
 #include "vboxvfs.h"
 
 #define DIRENT_RECLEN(namelen)    ((sizeof(struct dirent) -               \
@@ -56,6 +63,68 @@ static int sfprov_vbox2errno(int rc)
 	if (rc == VERR_INVALID_NAME)
 	    return (ENOENT);
 	return (RTErrConvertToErrno(rc));
+}
+
+struct sfprov_mapped_mem {
+	vm_object_t obj;
+	size_t sz;
+	vm_offset_t base;
+};
+
+static int
+sfprov_map_string(struct sfprov_mapped_mem *mem, char *str)
+{
+	int error;
+	SHFLSTRING *shflstr;
+	int len = strlen(str);
+	int npages;
+
+	/*
+	 * Being able to wire this memory is a requirement, so it must be
+	 * allocated via the kernel vm map.
+	 */
+	mem->sz = len + 1 + sizeof(*shflstr) - sizeof(shflstr->String);
+	npages = mem->sz >> PAGE_SHIFT;
+	if (npages == 0)
+		npages = 1;
+
+#if 0
+	mem->obj = vm_object_allocate(OBJT_DEFAULT, npages);
+	printf("%s: vm_object_allocate() returned %p\n", __func__, mem->obj);
+	if (mem->obj == NULL)
+		return (ENOMEM);
+	mem->base = (caddr_t) vm_map_min(kernel_map);
+
+	error = vm_map_find(kernel_map, mem->obj, 0, (vm_offset_t *)&mem->base,
+	    mem->sz, 0, VMFS_OPTIMAL_SPACE, VM_PROT_ALL, VM_PROT_ALL, 0);
+	printf("%s: vm_map_find() returned %d\n", __func__, error);
+	if (error != 0) {
+		vm_object_deallocate(mem->obj);
+		mem->obj = 0;
+		return (error);
+	}
+	printf("%s: obj=%p sz=%zd base=%p\n", __func__, mem->obj, mem->sz, mem->base);
+#endif
+	mem->base = kmem_alloc_contig(kernel_arena, mem->sz, M_WAITOK | M_ZERO,
+	    /*low*/ 0, /*high*/ ~0, PAGE_SIZE, /*boundary*/ 0,
+	    VM_MEMATTR_DEFAULT);
+	shflstr = (SHFLSTRING *)mem->base;
+	shflstr->u16Size = len + 1;
+	shflstr->u16Length = len;
+	strcpy(shflstr->String.utf8, str);
+
+	return (0);
+}
+
+static void
+sfprov_unmap_string(struct sfprov_mapped_mem *mem)
+{
+	kmem_free(kernel_arena, (vm_offset_t) mem->base, mem->sz);
+#if 0
+	vm_map_remove(kernel_map, (vm_offset_t) mem->base,
+	    (vm_offset_t)(mem->base + mem->sz));
+	vm_object_deallocate(mem->obj);
+#endif
 }
 
 /*
@@ -126,15 +195,46 @@ sfprov_mount(char *path, sfp_mount_t **mnt)
 	SHFLSTRING *str;
 	int size;
 	int error;
+	struct sfprov_mapped_mem strmem;
 
 	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 	VBOXVFS_DEBUG(1, "%s: path: [%s]", __FUNCTION__, path);
 
+	error = sfprov_map_string(&strmem, path);
+	if (error != 0)
+		return (error);
+
 	m = malloc(sizeof (*m),  M_VBOXVFS, M_WAITOK | M_ZERO);
-	str = sfprov_string(path, &size);
-	error = vboxCallMapFolder(&vbox_client, str, &m->map);
+	/*
+	 * Currently, this call fails, returning -8 (VERR_NO_MEMORY aka ENOMEM):
+	 * #0 0xffffffff82809181 at rtR0MemObjNativeLockInMap+0x41
+	 * #1 0xffffffff828092b7 at rtR0MemObjNativeLockKernel+0x27
+	 * #2 0xffffffff827fb399 at VBoxGuest_RTR0MemObjLockKernelTag+0xc9
+	 * #3 0xffffffff827f26c3 at VbglR0HGCMInternalCall+0x253
+	 * #4 0xffffffff827f0341 at VBoxGuestCommonIOCtl_HGCMCall+0x2a1
+	 * #5 0xffffffff827eda5d at VBoxGuestCommonIOCtl+0x67d
+	 * #6 0xffffffff827ea294 at VBoxGuestIDCCall+0x94
+	 * #7 0xffffffff81e1722b at vbglDriverIOCtl+0x5b
+	 * #8 0xffffffff81e16b9e at VbglHGCMCall+0x3e
+	 * #9 0xffffffff81e1521b at vboxCallMapFolder+0xcb
+	 * #10 0xffffffff81e129e7 at sfprov_mount+0x117
+	 * #11 0xffffffff81e11465 at vboxfs_mount+0x295
+	 * #12 0xffffffff80a0bc14 at vfs_donmount+0x11e4
+	 * #13 0xffffffff80a0aa01 at sys_nmount+0x71
+	 * #14 0xffffffff80d8395a at amd64_syscall+0x25a
+	 * #15 0xffffffff80d6144b at Xfast_syscall+0xfb
+	 *
+	 * This appears to be because VirtualBox expects to wire the string
+	 * containing the shared folder name.  But vm_map_wire(), as called
+	 * in frame 0 above, requires that the address be within kernel_map.
+	 * malloc'd memory doesn't meet this requirement.  What do we do?
+	 *
+	 * This mechanism apparently works on Linux and Solaris.  It seems
+	 * likely the wiring of memory is required to ensure that physical
+	 * pages passed to the host from the guest are stable.
+	 */
+	error = vboxCallMapFolder(&vbox_client, (SHFLSTRING *)strmem.base, &m->map);
 	if (RT_FAILURE(error)) {
-		printf("sfprov_mount: vboxCallMapFolder() failed error=%d\n", error);
 		free(m, M_VBOXVFS);
 		*mnt = NULL;
 		error = sfprov_vbox2errno(error);
@@ -142,7 +242,8 @@ sfprov_mount(char *path, sfp_mount_t **mnt)
 		*mnt = m;
 		error = 0;
 	}
-	free(str, M_VBOXVFS);
+	sfprov_unmap_string(&strmem);
+	printf("%s(%s): error=%d\n", __func__, path, error);
 	return (error);
 }
 
