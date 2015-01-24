@@ -14,6 +14,11 @@ edit /tmp/vbox-addon-depends, remove/modify error entries from last command:
 pkg install `cat /tmp/vbox-addon-depends`
 ```
 
+There is a pre-generated list is at `misc/all-depends-list`, to install:
+```sh
+pkg install `cat misc/all-depends-list`
+```
+
 To build:
 
 ```sh
