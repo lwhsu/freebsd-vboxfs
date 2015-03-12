@@ -5,11 +5,12 @@ PORTSDIR?=	${.CURDIR}/../freebsd-ports
 PORTDIR?=	virtualbox-ose-additions
 # Specify the location of your FreeBSD sources, if needed -- for more
 # details see mount_vboxfs/Makefile, where this is actually used:
-#FREEBSD_SRC?=
+FREEBSD_SRC?=	${.CURDIR}/../freebsd
 
 
 # Build invariants.
 PORTPATH=	${PORTSDIR}/emulators/${PORTDIR}
+MAINPORTPATH=	${PORTSDIR}/emulators/virtualbox-ose
 ADDITIONS=	src/VBox/Additions/freebsd
 VBOXVFS=	${ADDITIONS}/vboxvfs
 
@@ -39,6 +40,7 @@ syssetup:
 		icu \
 		kBuild \
 		libidl \
+		pkgconf \
 		python \
 		qt4-gui \
 		qt4-moc \
@@ -49,27 +51,29 @@ syssetup:
 		sdl \
 		yasm
 
+PORTMAKE=	${MAKE} SRC_BASE=${FREEBSD_SRC} BATCH=1 \
+		PATCH_DEBUG=1
+
 # Set up the port directory so we can make changes here and have them be
 # reflected in the port.  The port just serves as a scaffolding to do the
 # full build, since this repository only has the work in progress code.
 #
 # Only do this step after syssetup is done.
 portsetup:
-	cp -f ${.CURDIR}/patch-src-VBox-Additions-freebsd-Makefile.kmk \
-		${PORTPATH}/files
-	cd ${PORTPATH} && ${MAKE} BATCH=1 clean patch && \
+	cp -f ${.CURDIR}/patch-* ${MAINPORTPATH}/files
+	cd ${PORTPATH} && sudo ${PORTMAKE} clean && ${PORTMAKE} patch && \
 		cp -R ${.CURDIR}/vboxvfs/ `${MAKE} -V WRKSRC`/${VBOXVFS} && \
-		${MAKE} build
+		${PORTMAKE} build
 
 # Re-run the port build, if needed.
 portbuild:
 	cd ${PORTPATH} && \
 		rm -f `${MAKE} -V WRKDIR`/.build_done* && \
-		${MAKE} build
+		${PORTMAKE} build
 
 portinstall:
 	cd ${PORTPATH} && rm -f `${MAKE} -V WRKDIR`/.{stage,install}_done* && \
-		${MAKE} deinstall install
+		${PORTMAKE} deinstall install
 
 # (Re-)Generate the cscope database, storing them in the source directory.
 # This will include all of the relevant VirtualBox source code and headers.
@@ -87,10 +91,26 @@ build:
 		cd $$WRKSRC/${VBOXVFS} && kmk BUILD_TYPE=debug
 
 # Load the module from the build.
-kldload:
+ADDITIONS_KLDS=	./out/freebsd.amd64/debug/bin/additions
+KLDS=	${ADDITIONS_KLDS}/vboxguest.ko \
+	${ADDITIONS_KLDS}/vboxvfs.ko
+
+install:
 	cd `${MAKE} -C ${PORTPATH} -V WRKSRC` && \
-		kldload ./out/freebsd.amd64/debug/bin/additions/vboxvfs.ko
+		cp ${KLDS} /boot/modules && sync -a && sync -a && sync -a
+
+kldload: install
+	kldload vboxvfs
+
+portenv:
+	-cd `${MAKE} -C ${PORTPATH} -V WRKSRC` && /bin/sh
+
+testmount:
+	/sbin/mount_vboxfs test0 /mnt
 
 # Unload the module, for completeness' sake.
 kldunload:
-	-kldunload vboxvfs.ko
+	-kldunload vboxvfs
+	-service vboxservice stop
+	-service vboxguest stop
+	-kldunload vboxguest
