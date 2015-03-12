@@ -135,7 +135,7 @@ main(int argc, char *argv[])
 		uid = st.st_uid;
 	if (gid == (gid_t)-1)
 		gid = st.st_gid;
-	if (file_mode == 0 )
+	if (file_mode == 0)
 		file_mode = st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
 	if (dir_mode == 0) {
 		dir_mode = file_mode;
@@ -154,8 +154,8 @@ main(int argc, char *argv[])
 	build_iovec(&iov, &iovlen, "from", host_name, (size_t)-1);
 	build_iovec_argf(&iov, &iovlen, "uid", "%d", uid);
 	build_iovec_argf(&iov, &iovlen, "gid", "%d", gid);
-	build_iovec_argf(&iov, &iovlen, "file_mode", "%d", file_mode);
-	build_iovec_argf(&iov, &iovlen, "dir_mode", "%d", dir_mode);
+	build_iovec_argf(&iov, &iovlen, "file_mode", "%o", file_mode);
+	build_iovec_argf(&iov, &iovlen, "dir_mode", "%o", dir_mode);
 	build_iovec(&iov, &iovlen, "errmsg", errmsg, sizeof(errmsg));
 
 	error = nmount(iov, iovlen, mntflags);
