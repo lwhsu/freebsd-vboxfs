@@ -463,24 +463,26 @@ sfprov_close(sfp_file_t *fp)
 }
 
 int
-sfprov_read(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes)
+sfprov_read(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes,
+    int buflocked)
 {
 	int rc;
 
 	rc = vboxCallRead(&vbox_client, &fp->map, fp->handle, offset,
-	    numbytes, (uint8_t *)buffer, /*buffer is locked?*/0);
+	    numbytes, (uint8_t *)buffer, buflocked);
 	if (RT_FAILURE(rc))
 		return (sfprov_vbox2errno(rc));
 	return (0);
 }
 
 int
-sfprov_write(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes)
+sfprov_write(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes,
+    int buflocked)
 {
 	int rc;
 
 	rc = vboxCallWrite(&vbox_client, &fp->map, fp->handle, offset,
-	    numbytes, (uint8_t *)buffer, /*buffer is locked?*/0);
+	    numbytes, (uint8_t *)buffer, buflocked);
 	if (RT_FAILURE(rc))
 		return (sfprov_vbox2errno(rc));
 	return (0);

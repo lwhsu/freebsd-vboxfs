@@ -32,12 +32,6 @@
 #include "vboxvfs.h"
 
 /*
- * For now we'll use an I/O buffer that doesn't page fault for VirtualBox
- * to transfer data into.
- */
-char *vboxfs_buffer;
-
-/*
  * Prototypes for VBOXVFS vnode operations
  */
 static vop_create_t	vboxfs_create;
@@ -58,8 +52,6 @@ static vop_mkdir_t	vboxfs_mkdir;
 static vop_rmdir_t	vboxfs_rmdir;
 static vop_symlink_t	vboxfs_symlink;
 static vop_readdir_t	vboxfs_readdir;
-static vop_strategy_t	vboxfs_strategy;
-static vop_bmap_t	vboxfs_bmap;
 static vop_print_t	vboxfs_print;
 static vop_pathconf_t	vboxfs_pathconf;
 static vop_advlock_t	vboxfs_advlock;
@@ -75,7 +67,6 @@ struct vop_vector vboxfs_vnodeops = {
 	.vop_default	= &default_vnodeops,
 
 	.vop_access	= vboxfs_access,
-	.vop_bmap	= vboxfs_bmap,
 	.vop_advlock	= vboxfs_advlock,
 	.vop_close	= vboxfs_close,
 	.vop_create	= vboxfs_create,
@@ -100,7 +91,6 @@ struct vop_vector vboxfs_vnodeops = {
 	.vop_rename	= vboxfs_rename,
 	.vop_rmdir	= vboxfs_rmdir,
 	.vop_setattr	= vboxfs_setattr,
-	.vop_strategy	= vboxfs_strategy,
 	.vop_vptofh 	= vboxfs_vptofh,
 	.vop_symlink	= vboxfs_symlink,
 	.vop_write	= vboxfs_write,
@@ -147,7 +137,7 @@ sfnode_access(sfnode_t *node, mode_t mode, cred_t *cr)
 	/*
 	 * mask off the permissions based on uid/gid
 	 */
- 	if (crgetuid(cr) != sffs->sf_uid) {
+	if (crgetuid(cr) != sffs->sf_uid) {
 		shift += 3;
 		if (groupmember(sffs->sf_gid, cr) == 0)
 			shift += 3;
@@ -257,22 +247,24 @@ vfsnode_get_vnode(struct vboxfs_node *node)
 static int
 vboxfs_open(struct vop_open_args *ap)
 {
-	struct vnode *vp = ap->a_vp;
 	struct vboxfs_node *np;
-	int error = 0;
-	off_t fsize;
+	sfp_file_t *fp;
+	int error;
 
-	np = VTOVBOXFS(vp);
-	vfsnode_open(np);
-	if (np->sf_file == NULL)
-		error = EINVAL;
+	np = VTOVBOXFS(ap->a_vp);
+	/*
+	 * XXX need to populate sf_path somehow.  This information is not
+	 *     provided to VOP_OPEN().  This must be why the Solaris
+	 *     version has 'sfnode's in it.
+	 */
+	error = sfprov_open(np->vboxfsmp->sf_handle, np->sf_path, &fp);
+	if (error != 0)
+		return (error);
 
-	if (error == 0) {
-		fsize = np->vboxfsmp->size;
-		vnode_create_vobject(ap->a_vp, fsize, ap->a_td);
-	}
+	np->sf_file = fp;
+	vnode_create_vobject(ap->a_vp, 0, ap->a_td);
 
-	return (error);
+	return (0);
 }
 
 #if 0
@@ -550,8 +542,6 @@ vboxfs_setattr(struct vop_setattr_args *ap)
 static int
 vboxfs_read(struct vop_read_args *ap)
 {
-	static const int clustersize = MAXBSIZE;	
-
 	struct vnode		*vp = ap->a_vp;
 	struct uio 		*uio = ap->a_uio;
 	struct vboxfs_node	*np = VTOVBOXFS(vp);
@@ -560,7 +550,6 @@ vboxfs_read(struct vop_read_args *ap)
 	uint32_t		done;
 	unsigned long		offset;
 	ssize_t			total;
-	long 			on;
 
 	if (vp->v_type == VDIR)
 		return (EISDIR);
@@ -580,23 +569,18 @@ vboxfs_read(struct vop_read_args *ap)
 	if (total == 0)
 		return (0);
 
-	vfsnode_open(np);
 	if (np->sf_file == NULL)
-		return (EINVAL);
+		return (ENXIO);
 
 	do {
 		offset = uio->uio_offset;
-		on = blkoff(np->vboxfsmp, uio->uio_offset);
-		done = bytes = min((u_int)(clustersize - on), uio->uio_resid);
-		error = sfprov_read(np->sf_file, vboxfs_buffer, offset, &done);
-		if (error == 0 && done > 0)
-			error = uiomove(vboxfs_buffer, done, uio);
+		done = bytes = min(MAXPHYS, uio->uio_resid);
+		error = sfprov_read(np->sf_file, uio->uio_iov->iov_base,
+		    offset, &done, uio->uio_segflg == UIO_SYSSPACE);
+		uio->uio_resid -= done;
 	} while (error == 0 && uio->uio_resid > 0 && done > 0);
 
-
-	/*
-	 * a partial read is never an error
-	 */
+	/* a partial read is never an error */
 	if (total != uio->uio_resid)
 		error = 0;
 	return (error);
@@ -655,6 +639,7 @@ vboxfs_rmdir(struct vop_rmdir_args *ap)
 {
 	return (EOPNOTSUPP);
 }
+
 #if 0
 struct vboxfs_uiodir {
 	struct dirent *dirent;
@@ -663,8 +648,8 @@ struct vboxfs_uiodir {
 	int acookies;
 	int eofflag;
 };
-
-static int
+ 
+ static int
 vboxfs_uiodir(struct vboxfs_uiodir *uiodir, int de_size, struct uio *uio,
     long cookie)
 {
@@ -684,7 +669,9 @@ vboxfs_uiodir(struct vboxfs_uiodir *uiodir, int de_size, struct uio *uio,
 	return (uiomove(uiodir->dirent, de_size, uio));
 }
 #endif
-static int vboxfs_readdir(struct vop_readdir_args *ap)
+
+static int
+vboxfs_readdir(struct vop_readdir_args *ap)
 {
 	struct vnode *vp = ap->a_vp;
 	struct uio *uio = ap->a_uio;
@@ -812,7 +799,7 @@ vboxfs_fsync(struct vop_fsync_args *ap)
 }
 
 static int
-vboxfs_print (struct vop_print_args *ap)
+vboxfs_print(struct vop_print_args *ap)
 {
 	struct vnode *vp = ap->a_vp;
 	struct vboxfs_node *np;
@@ -831,7 +818,7 @@ vboxfs_print (struct vop_print_args *ap)
 }
 
 static int
-vboxfs_pathconf (struct vop_pathconf_args *ap)
+vboxfs_pathconf(struct vop_pathconf_args *ap)
 {
 	//struct vnode 		*vp = ap->a_vp;
 	register_t *retval = ap->a_retval;
@@ -852,53 +839,6 @@ vboxfs_pathconf (struct vop_pathconf_args *ap)
 		break;
 	}
 	return (error);
-}
-
-static int
-vboxfs_strategy (struct vop_strategy_args *ap)
-{
-	struct buf *bp;
-	struct vnode *vp;
-	struct vboxfs_node *np;
-	struct bufobj *bo;
-
-	bp = ap->a_bp;
-	vp = ap->a_vp;
-	np = VTOVBOXFS(vp);
-
-	if (bp->b_blkno == bp->b_lblkno) {
-		bp->b_blkno = bp->b_lblkno << (np->vboxfsmp->bshift - DEV_BSHIFT);
-	}
-	bo = np->vboxfsmp->sf_bo;
-	bp->b_iooffset = dbtob(bp->b_blkno);
-	BO_STRATEGY(bo, bp);
-	return (0);
-}
-
-static int
-vboxfs_bmap(struct vop_bmap_args *ap)
-{
-	struct vnode *vp;	
-	struct vboxfs_node *np;
-	
-	vp = ap->a_vp;
-	np = VTOVBOXFS(vp);
-
-	if (ap->a_bop != NULL)
-		*ap->a_bop = &np->vboxfsmp->sf_devvp->v_bufobj;
-	if (ap->a_bnp == NULL)
-		return (0);
-	if (ap->a_runb)
-		*ap->a_runb = 0;
-
-	/* Translate logical to physical sector number */
-	*ap->a_bnp = ap->a_bn << (np->vboxfsmp->bshift - DEV_BSHIFT);
-
-	if (ap->a_runp)
-		*ap->a_runp = 0;
-	if (ap->a_runb)
-		*ap->a_runb = 0;
-	return (0);
 }
 
 /*

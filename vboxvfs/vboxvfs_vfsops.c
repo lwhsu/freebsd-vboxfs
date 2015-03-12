@@ -119,7 +119,8 @@ static const char *vboxfs_opts[] = {
 			val = strtoul(optarg, &ep, base);		\
 		if (optarg == NULL || *ep != '\0') {			\
 			struct sbuf *sb = sbuf_new_auto();		\
-			sbuf_printf(sb, "Invalid %s", optname);		\
+			sbuf_printf(sb, "Invalid %s: \"%s\"", optname,	\
+			    optarg);					\
 			sbuf_finish(sb);				\
 			vfs_mount_error(mp, sbuf_data(sb));		\
 			sbuf_delete(sb);				\
@@ -132,17 +133,12 @@ static int
 vboxfs_mount(struct mount *mp)
 {
 	struct vboxfs_mnt *vboxfsmp = NULL; 
-	struct cdev *dev;
-	struct g_consumer *cp;
-	struct vnode *devvp;	/* vnode of the mount device */
-	struct thread *td = curthread;
 	struct vfsoptlist *opts = mp->mnt_optnew;
-	struct nameidata nd, *ndp = &nd;
 	sfp_mount_t *handle = NULL;
-	bool readonly = false;
+	int readonly = 0;
 	sffs_fsinfo_t fsinfo;
-	int error, share_len, fspath_len;
-	char *share_name, *fspath;
+	int error, share_len;
+	char *share_name;
    	mode_t file_mode = 0, dir_mode = 0;
 	uid_t uid = 0;
 	gid_t gid = 0;
@@ -158,16 +154,8 @@ vboxfs_mount(struct mount *mp)
 	VBOX_INTOPT("uid", uid, 10);
 	VBOX_INTOPT("gid", gid, 10);
 	VBOX_INTOPT("file_mode", file_mode, 8);
-	file_mode &= S_IRWXU | S_IRWXG | S_IRWXO;
 	VBOX_INTOPT("dir_mode", dir_mode, 8);
-	dir_mode &= S_IRWXU | S_IRWXG | S_IRWXO;
 	VBOX_INTOPT("ro", readonly, 10);
-
-	error = vfs_getopt(opts, "fspath", (void **)&fspath, &fspath_len);
-	if (error != 0 || fspath_len == 0) {
-		vfs_mount_error(mp, "Invalid fspath");
-		return (EINVAL);
-	}
 
 	error = vfs_getopt(opts, "from", (void **)&share_name, &share_len);
 	if (error != 0 || share_len == 0) {
@@ -178,71 +166,33 @@ vboxfs_mount(struct mount *mp)
 	vboxfsmp = malloc(sizeof(struct vboxfs_mnt), M_VBOXVFS, M_WAITOK | M_ZERO);
 	vboxfsmp->sf_uid = uid;
 	vboxfsmp->sf_gid = gid;
-	vboxfsmp->sf_fmode = file_mode;
-	vboxfsmp->sf_dmode = dir_mode;
+	vboxfsmp->sf_fmode = file_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+	vboxfsmp->sf_dmode = dir_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
 
 	/* Invoke Hypervisor mount interface before proceeding */
 	error = sfprov_mount(share_name, &handle);
 	if (error)
 		return (error);
 
-	mp->mnt_data = handle;
-
-	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, fspath, td);
-	if ((error = namei(ndp))) {
-		sfprov_unmount(handle);
-		return (error);
-	}
-	NDFREE(ndp, NDF_ONLY_PNBUF);
-	devvp = ndp->ni_vp;
-
-	/* Check the access rights on the mount device */
-	error = VOP_ACCESS(devvp, VREAD, td->td_ucred, td);
-	if (error)
-		error = priv_check(td, PRIV_VFS_MOUNT_PERM);
-	if (error) {
-		sfprov_unmount(handle);
-		vput(devvp);
-		return (error);
-	}
-
-	dev = devvp->v_rdev;
-	dev_ref(dev);
-	DROP_GIANT();
-	g_topology_lock();
-	error = g_vfs_open(devvp, &cp, "vboxvfs", 0);
-	g_topology_unlock();
-	PICKUP_GIANT();
-	VOP_UNLOCK(devvp, 0);
+	/* Determine whether the filesystem must be read-only. */
+	error = sfprov_get_fsinfo(handle, &fsinfo);
 	if (error != 0) {
 		sfprov_unmount(handle);
-		free(vboxfsmp, M_VBOXVFS);
-		dev_rel(dev);
-		vrele(devvp);
-		return error;
+		return (error);
 	}
-
-	if (devvp->v_rdev->si_iosize_max != 0)
-		mp->mnt_iosize_max = devvp->v_rdev->si_iosize_max;
-	if (mp->mnt_iosize_max > MAXPHYS)
-		mp->mnt_iosize_max = MAXPHYS;
-
-	/* Determine whether the filesystem must be read-only. */
-	if (!readonly) {
-		error = sfprov_get_fsinfo(handle, &fsinfo);
-		if (error != 0) {
-			sfprov_unmount(handle);
-			return (error);
-		}
+	if (readonly == 0)
 		readonly = (fsinfo.readonly != 0);
-	}
 
-	mp->mnt_data = vboxfsmp;
-	mp->mnt_stat.f_fsid.val[0] = dev2udev(devvp->v_rdev);
-	mp->mnt_stat.f_fsid.val[1] = mp->mnt_vfc->vfc_typenum;
+	vboxfsmp->sf_handle = handle;
+	vboxfsmp->sf_vfsp = mp;
+
 	MNT_ILOCK(mp);
+	mp->mnt_data = vboxfsmp;
+	bzero(&mp->mnt_stat.f_fsid, sizeof(&mp->mnt_stat.f_fsid));
+	/* f_fsid is int32_t but serial is uint32_t, convert */
+	memcpy(&mp->mnt_stat.f_fsid, &fsinfo.serial, sizeof(mp->mnt_stat.f_fsid));
 	mp->mnt_flag |= MNT_LOCAL;
-	if (readonly)
+	if (readonly != 0)
 		mp->mnt_flag |= MNT_RDONLY;
 #if __FreeBSD_version >= 1000021
 	mp->mnt_kern_flag |= MNTK_LOOKUP_SHARED | MNTK_EXTENDED_SHARED;
@@ -251,17 +201,6 @@ vboxfs_mount(struct mount *mp)
 	    MNTK_EXTENDED_SHARED;
 #endif
 	MNT_IUNLOCK(mp);
-
-	vboxfsmp->sf_handle = handle;
-	vboxfsmp->sf_vfsp = mp;
-	vboxfsmp->sf_dev = dev;
-	vboxfsmp->sf_devvp = devvp;
-	vboxfsmp->sf_cp = cp;
-	vboxfsmp->sf_bo = &devvp->v_bufobj;
-	vboxfsmp->size = cp->provider->mediasize;
-	vboxfsmp->bsize = cp->provider->sectorsize;
-	vboxfsmp->bmask = vboxfsmp->bsize - 1;
-	vboxfsmp->bshift = ffs(vboxfsmp->bsize) - 1;
 	vfs_mountedfrom(mp, share_name);
 
 	return (0);
@@ -288,8 +227,7 @@ vboxfs_unmount(struct mount *mp, int mntflags)
 	if (mntflags & MNT_FORCE)
 		flags |= FORCECLOSE;
 
-	/* There is 1 extra root vnode reference (vnode_root). */
-	error = vflush(mp, 1, flags, td);
+	error = vflush(mp, 0, flags, td);
 	if (error)
 		return (error);
 
@@ -299,11 +237,9 @@ vboxfs_unmount(struct mount *mp, int mntflags)
 		/* TBD anything here? */
 	}
 
-	free(vboxfsmp->sf_share_name, M_VBOXVFS);
-	free(vboxfsmp->sf_mntpath, M_VBOXVFS);
 	free(vboxfsmp, M_VBOXVFS);
-	mp->mnt_data = NULL;
 	MNT_ILOCK(mp);
+	mp->mnt_data = NULL;
 	mp->mnt_flag &= ~MNT_LOCAL;
 	MNT_IUNLOCK(mp);
 
@@ -463,8 +399,8 @@ vboxfs_statfs(struct mount *mp, struct statfs *sbp)
 	sbp->f_ffree = fsinfo.blksavail / 4;
 
 	sbp->f_blocks = fsinfo.blksused + sbp->f_bavail;
-	/* f_fsid is int32_t but serial is uint32_t, convert */
-	memcpy(&sbp->f_fsid, &fsinfo.serial, sizeof(sbp->f_fsid));
+	sbp->f_fsid.val[0] = mp->mnt_stat.f_fsid.val[0];
+	sbp->f_fsid.val[1] = mp->mnt_stat.f_fsid.val[1];
 	sbp->f_namemax = fsinfo.maxnamesize;
 
 	return (0);

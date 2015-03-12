@@ -202,7 +202,7 @@ typedef struct sffs_dirents {
  */
 struct vboxfs_mnt {
 	struct mount	*sf_vfsp;	/* filesystem's vfs struct */
-	struct vnode	*sf_devvp;	/* of vnode of the root directory */
+	sfp_mount_t	*sf_handle;	/* guest-host communication handle */
 	uid_t		sf_uid;		/* owner of all shared folders */
 	gid_t		sf_gid;		/* group of all shared folders */
 	mode_t		sf_dmode;	/* mode of all directories */
@@ -211,17 +211,7 @@ struct vboxfs_mnt {
 	mode_t		sf_fmask;	/* mask of all files */
 	int		sf_stat_ttl;	/* ttl for stat caches (in ms) */
 	int		sf_fsync;	/* whether to honor fsync or not */
-	char		*sf_share_name;
-	char		*sf_mntpath;	/* name of mount point */
-	sfp_mount_t	*sf_handle;
 	uint64_t	sf_ino;		/* per FS ino generator */
-	off_t		size;
-	int		bsize;
-	int		bshift;
-	int		bmask;
-	struct bufobj	*sf_bo;
-	struct cdev	*sf_dev;
-	struct g_consumer *sf_cp;
 };
 
 /*
@@ -348,9 +338,9 @@ extern int sfprov_create(sfp_mount_t *, char *path, mode_t mode,
 extern int sfprov_open(sfp_mount_t *, char *path, sfp_file_t **fp);
 extern int sfprov_close(sfp_file_t *fp);
 extern int sfprov_read(sfp_file_t *, char * buffer, uint64_t offset,
-    uint32_t *numbytes);
+    uint32_t *numbytes, int buflocked);
 extern int sfprov_write(sfp_file_t *, char * buffer, uint64_t offset,
-    uint32_t *numbytes);
+    uint32_t *numbytes, int buflocked);
 extern int sfprov_fsync(sfp_file_t *fp);
 
 
