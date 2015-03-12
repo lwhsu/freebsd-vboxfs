@@ -1,8 +1,3 @@
-/** @file
- * VirtualBox File System for FreeBSD Guests, provider implementation.
- * Portions contributed by: Ronald.
- */
-
 /*
  * Copyright (C) 2008-2012 Oracle Corporation
  *
@@ -46,22 +41,23 @@
 #include <vm/vm_extern.h>
 #include "vboxvfs.h"
 
-#define DIRENT_RECLEN(namelen)    ((sizeof(struct dirent) -               \
-                                    sizeof(((struct dirent *)NULL)->d_name) + \
-                                    (namelen) + 1 + 7) & ~7)
-#define DIRENT_NAMELEN(reclen)        \
-        (sizeof((reclen) - (sizeof(((struct dirent *)NULL)->d_name))))
+#define DIRENT_RECLEN(namelen)	((sizeof(struct dirent) -	\
+				sizeof(((struct dirent *)NULL)->d_name) + \
+				(namelen) + 1 + 7) & ~7)
+#define DIRENT_NAMELEN(reclen)	\
+	(sizeof((reclen) - (sizeof(((struct dirent *)NULL)->d_name))))
 
 static VBSFCLIENT vbox_client;
 
 extern u_int vboxvfs_debug;
 
-static int sfprov_vbox2errno(int rc)
+static int
+sfprov_vbox2errno(int rc)
 {
 	if (rc == VERR_ACCESS_DENIED)
 		return (EACCES);
 	if (rc == VERR_INVALID_NAME)
-	    return (ENOENT);
+		return (ENOENT);
 	return (RTErrConvertToErrno(rc));
 }
 
@@ -147,45 +143,36 @@ sfprov_string(char *path, int *sz)
 sfp_connection_t *
 sfprov_connect(int version)
 {
-        /*
-         * only one version for now, so must match
-         */
-        int error = -1;
-        if (version != SFPROV_VERSION)
-        {
-                printf("sfprov_connect: wrong version. version=%d expected=%d\n", version, SFPROV_VERSION);
-                return NULL;
-        }
-        error = vboxInit();
-        if (RT_SUCCESS(error))
-        {
-                error = vboxConnect(&vbox_client);
-                if (RT_SUCCESS(error))
-                {
-                        error = vboxCallSetUtf8(&vbox_client);
-                        if (RT_SUCCESS(error))
-                        {
-                                return ((sfp_connection_t *)&vbox_client);
-                        }
-                        else
-                                printf("sfprov_connect: vboxCallSetUtf8() failed\n");
+	/* only one version for now, so must match */
+	int error = -1;
 
-                        vboxDisconnect(&vbox_client);
-                }
-                else
-                        printf("sfprov_connect: vboxConnect() failed error=%d\n", error);
-                vboxUninit();
-        }
-        else
-                printf("sfprov_connect: vboxInit() failed error=%d\n", error);
-        return (NULL);
+	if (version != SFPROV_VERSION) {
+		printf("%s: version mismatch (%d, expected %d)\n", __func__,
+		    version, SFPROV_VERSION);
+		return (NULL);
+	}
+
+	if (RT_FAILURE(vboxInit()))
+		return (NULL);
+
+	if (RT_FAILURE(vboxConnect(&vbox_client))) {
+		vboxUninit();
+		return (NULL);
+	}
+
+	if (RT_FAILURE(vboxCallSetUtf8(&vbox_client))) {
+		vboxDisconnect(&vbox_client);
+		vboxUninit();
+		return (NULL);
+	}
+	return ((sfp_connection_t *)&vbox_client);
 }
 
 void
 sfprov_disconnect()
 {
-        vboxDisconnect(&vbox_client);
-        vboxUninit();
+	vboxDisconnect(&vbox_client);
+	vboxUninit();
 }
 
 int
@@ -273,6 +260,7 @@ sfprov_get_fsinfo(sfp_mount_t *mnt, sffs_fsinfo_t *fsinfo)
 	int rc;
 	SHFLVOLINFO info;
 	uint32_t bytes = sizeof(SHFLVOLINFO);
+	size_t bytesused;
 
 	rc = vboxCallFSInfo(&vbox_client, &mnt->map, 0,
 	    (SHFL_INFO_GET | SHFL_INFO_VOLUME), &bytes, (SHFLDIRINFO *)&info);
@@ -280,8 +268,11 @@ sfprov_get_fsinfo(sfp_mount_t *mnt, sffs_fsinfo_t *fsinfo)
 		return (sfprov_vbox2errno(rc));
 
 	fsinfo->blksize = info.ulBytesPerAllocationUnit;
-	fsinfo->blksused = (info.ullTotalAllocationBytes - info.ullAvailableAllocationBytes) / info.ulBytesPerAllocationUnit;
-	fsinfo->blksavail = info.ullAvailableAllocationBytes / info.ulBytesPerAllocationUnit;
+	bytesused =
+	    info.ullTotalAllocationBytes - info.ullAvailableAllocationBytes;
+	fsinfo->blksused = bytesused / info.ulBytesPerAllocationUnit;
+	fsinfo->blksavail = info.ullAvailableAllocationBytes /
+	    info.ulBytesPerAllocationUnit;
 	fsinfo->maxnamesize = info.fsProperties.cbMaxComponent;
 	fsinfo->readonly = info.fsProperties.fReadOnly;
 	return (0);
@@ -426,11 +417,7 @@ sfprov_create(
 	free(str, M_VBOXVFS);
 
 	if (RT_FAILURE(rc))
-	{
-		if (rc != VERR_ACCESS_DENIED && rc != VERR_WRITE_PROTECT)
-			printf("sfprov_create: vboxCallCreate failed! path=%s rc=%d\n", path, rc);
 		return (sfprov_vbox2errno(rc));
-	}
 	if (parms.Handle == SHFL_HANDLE_NIL) {
 		if (parms.Result == SHFL_FILE_EXISTS)
 			return (EEXIST);
@@ -536,7 +523,7 @@ sfprov_read(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes)
 	int rc;
 
 	rc = vboxCallRead(&vbox_client, &fp->map, fp->handle, offset,
-	    numbytes, (uint8_t *)buffer, 0);	/* what is that last arg? */
+	    numbytes, (uint8_t *)buffer, /*buffer is locked?*/0);
 	if (RT_FAILURE(rc))
 		return (sfprov_vbox2errno(rc));
 	return (0);
@@ -548,7 +535,7 @@ sfprov_write(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes)
 	int rc;
 
 	rc = vboxCallWrite(&vbox_client, &fp->map, fp->handle, offset,
-	    numbytes, (uint8_t *)buffer, 0);	/* what is that last arg? */
+	    numbytes, (uint8_t *)buffer, /*buffer is locked?*/0);
 	if (RT_FAILURE(rc))
 		return (sfprov_vbox2errno(rc));
 	return (0);
@@ -1063,11 +1050,15 @@ sfprov_readdir(
 		 * Create the dirent_t's and save the stats for each name
 		 */
 		for (info = infobuff; (char *) info < (char *) infobuff + numbytes; nents--) {
+			size_t buflen;
+
 			/* expand buffers if we need more space */
 			reclen = DIRENT_RECLEN(strlen(info->name.String.utf8));
 			entlen = sizeof(sffs_stat_t) + reclen;
-			if (SFFS_DIRENTS_OFF + cur_buf->sf_len + entlen > SFFS_DIRENTS_SIZE) {
-				cur_buf->sf_next = malloc(SFFS_DIRENTS_SIZE, M_VBOXVFS, M_WAITOK | M_ZERO);
+			buflen = SFFS_DIRENTS_OFF + cur_buf->sf_len + entlen;
+			if (buflen > SFFS_DIRENTS_SIZE) {
+				cur_buf->sf_next = malloc(SFFS_DIRENTS_SIZE,
+				    M_VBOXVFS, M_WAITOK | M_ZERO);
 				if (cur_buf->sf_next == NULL) {
 					error = ENOSPC;
 					goto done;
@@ -1080,7 +1071,8 @@ sfprov_readdir(
 			/* create the dirent with the name, offset, and len */
 			dirent = (struct sffs_dirent *)
 			    (((char *) &cur_buf->sf_entries[0]) + cur_buf->sf_len);
-			strncpy(&dirent->sf_entry.d_name[0], info->name.String.utf8, DIRENT_NAMELEN(reclen));
+			strncpy(&dirent->sf_entry.d_name[0],
+			    info->name.String.utf8, DIRENT_NAMELEN(reclen));
 			dirent->sf_entry.d_reclen = reclen;
 			offset += entlen;
 			//dirent->sf_entry.d_off = offset;
