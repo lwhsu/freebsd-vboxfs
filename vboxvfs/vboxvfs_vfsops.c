@@ -132,16 +132,17 @@ static int
 vboxfs_mount(struct mount *mp)
 {
 	struct vboxfs_mnt *vboxfsmp = NULL; 
-	struct buf *bp = NULL;
 	struct cdev *dev;
 	struct g_consumer *cp;
 	struct vnode *devvp;	/* vnode of the mount device */
 	struct thread *td = curthread;
 	struct vfsoptlist *opts = mp->mnt_optnew;
 	struct nameidata nd, *ndp = &nd;
-	sfp_mount_t *handle;
-	int error, share_len;
-	char *share_name;
+	sfp_mount_t *handle = NULL;
+	bool readonly = false;
+	sffs_fsinfo_t fsinfo;
+	int error, share_len, fspath_len;
+	char *share_name, *fspath;
    	mode_t file_mode = 0, dir_mode = 0;
 	uid_t uid = 0;
 	gid_t gid = 0;
@@ -160,22 +161,25 @@ vboxfs_mount(struct mount *mp)
 	file_mode &= S_IRWXU | S_IRWXG | S_IRWXO;
 	VBOX_INTOPT("dir_mode", dir_mode, 8);
 	dir_mode &= S_IRWXU | S_IRWXG | S_IRWXO;
+	VBOX_INTOPT("ro", readonly, 10);
+
+	error = vfs_getopt(opts, "fspath", (void **)&fspath, &fspath_len);
+	if (error != 0 || fspath_len == 0) {
+		vfs_mount_error(mp, "Invalid fspath");
+		return (EINVAL);
+	}
+
+	error = vfs_getopt(opts, "from", (void **)&share_name, &share_len);
+	if (error != 0 || share_len == 0) {
+		vfs_mount_error(mp, "Invalid from");
+		return (EINVAL);
+	}
 
 	vboxfsmp = malloc(sizeof(struct vboxfs_mnt), M_VBOXVFS, M_WAITOK | M_ZERO);
 	vboxfsmp->sf_uid = uid;
 	vboxfsmp->sf_gid = gid;
 	vboxfsmp->sf_fmode = file_mode;
 	vboxfsmp->sf_dmode = dir_mode;
-
-	error = vfs_getopt(opts, "from", (void **)&share_name, &share_len);
-	if (error || share_name[share_len - 1] != '\0' || share_len > 0xfffe) {
-		vfs_mount_error(mp, "Invalid from");
-		return (EINVAL);
-	}
-
-	/* Check that the mount device exists */
-	if (share_name == NULL)
-		return (EINVAL);
 
 	/* Invoke Hypervisor mount interface before proceeding */
 	error = sfprov_mount(share_name, &handle);
@@ -184,7 +188,7 @@ vboxfs_mount(struct mount *mp)
 
 	mp->mnt_data = handle;
 
-	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, share_name, td);
+	NDINIT(ndp, LOOKUP, FOLLOW | LOCKLEAF, UIO_SYSSPACE, fspath, td);
 	if ((error = namei(ndp))) {
 		sfprov_unmount(handle);
 		return (error);
@@ -223,11 +227,23 @@ vboxfs_mount(struct mount *mp)
 	if (mp->mnt_iosize_max > MAXPHYS)
 		mp->mnt_iosize_max = MAXPHYS;
 
+	/* Determine whether the filesystem must be read-only. */
+	if (!readonly) {
+		error = sfprov_get_fsinfo(handle, &fsinfo);
+		if (error != 0) {
+			sfprov_unmount(handle);
+			return (error);
+		}
+		readonly = (fsinfo.readonly != 0);
+	}
+
 	mp->mnt_data = vboxfsmp;
 	mp->mnt_stat.f_fsid.val[0] = dev2udev(devvp->v_rdev);
 	mp->mnt_stat.f_fsid.val[1] = mp->mnt_vfc->vfc_typenum;
 	MNT_ILOCK(mp);
 	mp->mnt_flag |= MNT_LOCAL;
+	if (readonly)
+		mp->mnt_flag |= MNT_RDONLY;
 #if __FreeBSD_version >= 1000021
 	mp->mnt_kern_flag |= MNTK_LOOKUP_SHARED | MNTK_EXTENDED_SHARED;
 #else
@@ -235,6 +251,8 @@ vboxfs_mount(struct mount *mp)
 	    MNTK_EXTENDED_SHARED;
 #endif
 	MNT_IUNLOCK(mp);
+
+	vboxfsmp->sf_handle = handle;
 	vboxfsmp->sf_vfsp = mp;
 	vboxfsmp->sf_dev = dev;
 	vboxfsmp->sf_devvp = devvp;
@@ -244,8 +262,6 @@ vboxfs_mount(struct mount *mp)
 	vboxfsmp->bsize = cp->provider->sectorsize;
 	vboxfsmp->bmask = vboxfsmp->bsize - 1;
 	vboxfsmp->bshift = ffs(vboxfsmp->bsize) - 1;
-
-	vfs_getnewfsid(mp);
 	vfs_mountedfrom(mp, share_name);
 
 	return (0);
@@ -401,10 +417,9 @@ vboxfs_init(struct vfsconf *vfsp)
 	}
 
 	error = sfprov_set_show_symlinks();
-	if (error != 0) {
+	if (error != 0)
 		printf("%s: host unable to show symlinks, error=%d\n",
 		    __func__, error);
-	}
 
 	PICKUP_GIANT();
 	return (0);
@@ -418,12 +433,7 @@ vboxfs_uninit(struct vfsconf *vfsp)
 {
 
 	DROP_GIANT();
-
-	/*
-	 * close connection to the provider
-	 */
 	sfprov_disconnect();
-
 	PICKUP_GIANT();
 	return (0);
 }
@@ -453,10 +463,8 @@ vboxfs_statfs(struct mount *mp, struct statfs *sbp)
 	sbp->f_ffree = fsinfo.blksavail / 4;
 
 	sbp->f_blocks = fsinfo.blksused + sbp->f_bavail;
-#if 0
-	(void) cmpldev(&d32, vfsp->vfs_dev);
-	sbp->f_fsid = d32;
-#endif
+	/* f_fsid is int32_t but serial is uint32_t, convert */
+	memcpy(&sbp->f_fsid, &fsinfo.serial, sizeof(sbp->f_fsid));
 	sbp->f_namemax = fsinfo.maxnamesize;
 
 	return (0);

@@ -63,13 +63,13 @@ static vop_bmap_t	vboxfs_bmap;
 static vop_print_t	vboxfs_print;
 static vop_pathconf_t	vboxfs_pathconf;
 static vop_advlock_t	vboxfs_advlock;
-static vop_getextattr_t vboxfs_getextattr;
+static vop_getextattr_t	vboxfs_getextattr;
 static vop_ioctl_t	vboxfs_ioctl;
 static vop_getpages_t	vboxfs_getpages;
 static vop_inactive_t	vboxfs_inactive;
 static vop_putpages_t	vboxfs_putpages;
 static vop_reclaim_t	vboxfs_reclaim;
-static vop_vptofh_t 	vboxfs_vptofh;
+static vop_vptofh_t	vboxfs_vptofh;
 
 struct vop_vector vboxfs_vnodeops = {
 	.vop_default	= &default_vnodeops,
@@ -267,8 +267,10 @@ vboxfs_open(struct vop_open_args *ap)
 	if (np->sf_file == NULL)
 		error = EINVAL;
 
-	fsize = np->vboxfsmp->size;
-	vnode_create_vobject(ap->a_vp, fsize, ap->a_td);
+	if (error == 0) {
+		fsize = np->vboxfsmp->size;
+		vnode_create_vobject(ap->a_vp, fsize, ap->a_td);
+	}
 
 	return (error);
 }

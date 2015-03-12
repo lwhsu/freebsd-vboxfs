@@ -338,6 +338,7 @@ typedef struct sffs_fsinfo {
 	uint64_t blksavail;
 	uint32_t maxnamesize;
 	uint32_t readonly;
+	uint32_t serial;
 } sffs_fsinfo_t;
 
 extern int sfprov_get_fsinfo(sfp_mount_t *, sffs_fsinfo_t *);
