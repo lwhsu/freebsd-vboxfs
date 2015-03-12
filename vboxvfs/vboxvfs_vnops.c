@@ -112,49 +112,6 @@ vboxfs_allocv(struct mount *mp, struct vnode **vpp, struct thread *td)
 	return (0);
 }
 
-/*
- * uid and gid in sffs determine owner and group for all files.
- */
-#if 0
-static int
-sfnode_access(sfnode_t *node, mode_t mode, cred_t *cr)
-{
-	sffs_data_t *sffs = node->sf_sffs;
-	mode_t m;
-	int shift = 0;
-	int error;
-	vnode_t *vp;
-
-	ASSERT(MUTEX_HELD(&sffs_lock));
-
-	/* get the mode from the cache or provider */
-	if (sfnode_stat_cached(node))
-		error = 0;
-	else
-		error = sfnode_update_stat_cache(node);
-	m = (error == 0) ? node->sf_stat.sf_mode : 0;
-
-	/*
-	 * mask off the permissions based on uid/gid
-	 */
-	if (crgetuid(cr) != sffs->sf_uid) {
-		shift += 3;
-		if (groupmember(sffs->sf_gid, cr) == 0)
-			shift += 3;
-	}
-	mode &= ~(m << shift);
-
-	if (mode == 0) {
-		error = 0;
-	} else {
-		vp = sfnode_get_vnode(node);
-		error = secpolicy_vnode_access(cr, vp, sffs->sf_uid, mode);
-		VN_RELE(vp);
-	}
-	return (error);
-}
-#endif 
-
 static int
 vboxfs_access(struct vop_access_args *ap)
 {
@@ -197,53 +154,6 @@ vfsnode_clear_dir_list(struct vboxfs_node *np)
 	}
 }
 
-/*
- * Open the provider file associated with a vnode. Holding the file open is
- * the only way we have of trying to have a vnode continue to refer to the
- * same host file in the host in light of the possibility of host side renames.
- */
-static void
-vfsnode_open(struct vboxfs_node *np)
-{
-	int error;
-	sfp_file_t *fp;
-
-	if (np->sf_file != NULL)
-		return;
-	error = sfprov_open(np->vboxfsmp->sf_handle, np->sf_path, &fp);
-	if (error == 0)
-		np->sf_file = fp;
-}
-
-/*
- * get a new vnode reference for an sfnode
- */
-#if 0
-struct vnode *
-vfsnode_get_vnode(struct vboxfs_node *node)
-{
-	struct vnode *vp;
-
-	if (node->sf_vnode != NULL) {
-		vref(node->sf_vnode);
-	} else {
-		vp = vn_alloc(KM_SLEEP);
-		printf("  %s gets vnode 0x%p\n", node->sf_path, vp);
-		vp->v_type = node->sf_type;
-		vp->v_vfsp = node->sf_sffs->sf_vfsp;
-		vn_setops(vp, sffs_ops);
-		vp->v_flag = VNOSWAP;
-#ifndef VBOXVFS_WITH_MMAP
-		vp->v_flag |= VNOMAP;
-#endif
-		vn_exists(vp);
-		vp->v_data = node;
-		node->sf_vnode = vp;
-	}
-	return (node->sf_vnode);
-}
-#endif
-
 static int
 vboxfs_open(struct vop_open_args *ap)
 {
@@ -266,97 +176,6 @@ vboxfs_open(struct vop_open_args *ap)
 
 	return (0);
 }
-
-#if 0
-/*
- * Some sort of host operation on an vboxfs_node has failed or it has been
- * deleted. Mark this node and any children as stale, deleting knowledge
- * about any which do not have active vnodes or children
- * This also handle deleting an inactive node that was already stale.
- */
-static void
-fvsnode_make_stale(struct vboxfs_node *node)
-{
-	struct vboxfs_node *np;
-	int len;
-	avl_index_t where;
-
-	/*
-	 * First deal with any children of a directory node.
-	 * If a directory becomes stale, anything below it becomes stale too.
-	 */
-	if (!node->sf_is_stale && node->sf_type == VDIR) {
-		len = strlen(node->sf_path);
-
-		np = node;
-		while ((np = AVL_NEXT(&sfnodes, node)) != NULL) {
-			ASSERT(!n->sf_is_stale);
-
-			/*
-			 * quit when no longer seeing children of node
-			 */
-			if (n->sf_sffs != node->sf_sffs ||
-			    strncmp(node->sf_path, n->sf_path, len) != 0 ||
-			    n->sf_path[len] != '/')
-				break;
-
-			/*
-			 * Either mark the child as stale or destroy it
-			 */
-			if (n->sf_vnode == NULL && n->sf_children == 0) {
-				sfnode_destroy(n);
-			} else {
-				LogFlowFunc(("sffs_make_stale(%s) sub\n",
-				    n->sf_path));
-				sfnode_clear_dir_list(n);
-
-				if (avl_find(&sfnodes, n, &where) == NULL)
-					panic("sfnode_make_stale(%s)"
-					    " not in sfnodes", n->sf_path);
-				avl_remove(&sfnodes, n);
-				n->sf_is_stale = 1;
-				if (avl_find(&stale_sfnodes, n, &where) != NULL)
-					panic("sffs_make_stale(%s) duplicates",
-					    n->sf_path);
-				avl_insert(&stale_sfnodes, n, where);
-			}
-		}
-	}
-	
-	/*
-	 * Now deal with the given node.
-	 */
-	if (node->sf_vnode == NULL && node->sf_children == 0) {
-		sfnode_destroy(node);
-	} else if (!node->sf_is_stale) {
-		LogFlowFunc(("sffs_make_stale(%s)\n", node->sf_path));
-		sfnode_clear_dir_list(node);
-		if (node->sf_parent)
-			sfnode_clear_dir_list(node->sf_parent);
-		if (avl_find(&sfnodes, node, &where) == NULL)
-			panic("sfnode_make_stale(%s) not in sfnodes",
-			    node->sf_path);
-		avl_remove(&sfnodes, node);
-		node->sf_is_stale = 1;
-		if (avl_find(&stale_sfnodes, node, &where) != NULL)
-			panic("sffs_make_stale(%s) duplicates", node->sf_path);
-		avl_insert(&stale_sfnodes, node, where);
-	}
-}
-static uint64_t
-sfnode_cur_time_usec(void)
-{
-	clock_t now = drv_hztousec(ddi_get_lbolt());
-	return now;
-}
-
-static int
-sfnode_stat_cached(sfnode_t *node)
-{
-	return (sfnode_cur_time_usec() - node->sf_stat_time) <
-	    node->sf_sffs->sf_stat_ttl * 1000L;
-}
-#endif
 
 static void
 vfsnode_invalidate_stat_cache(struct vboxfs_node *np)
@@ -640,36 +459,6 @@ vboxfs_rmdir(struct vop_rmdir_args *ap)
 	return (EOPNOTSUPP);
 }
 
-#if 0
-struct vboxfs_uiodir {
-	struct dirent *dirent;
-	u_long *cookies;
-	int ncookies;
-	int acookies;
-	int eofflag;
-};
- 
- static int
-vboxfs_uiodir(struct vboxfs_uiodir *uiodir, int de_size, struct uio *uio,
-    long cookie)
-{
-	if (uiodir->cookies != NULL) {
-		if (++uiodir->acookies > uiodir->ncookies) {
-			uiodir->eofflag = 0;
-			return (-1);
-		}
-		*uiodir->cookies++ = cookie;
-	}
-
-	if (uio->uio_resid < de_size) {
-		uiodir->eofflag = 0;
-		return (-1);
-	}
-
-	return (uiomove(uiodir->dirent, de_size, uio));
-}
-#endif
-
 static int
 vboxfs_readdir(struct vop_readdir_args *ap)
 {
@@ -861,109 +650,6 @@ vboxfs_advlock(struct vop_advlock_args *ap)
 {
 	return (EOPNOTSUPP);
 }
-
-/*
- * Look for a cached node, if not found either handle ".." or try looking
- * via the provider. Create an entry in sfnodes if found but not cached yet.
- * If the create flag is set, a file or directory is created. If the file
- * already existed, an error is returned.
- * Nodes returned from this routine always have a vnode with its ref count
- * bumped by 1.
- */
-#if 0
-static struct vboxfs_node *
-vfsnode_lookup(struct vboxfs_node *dir, char *name, vtype_t create,
-    mode_t c_mode, sffs_stat_t *stat, uint64_t stat_time, int *err)
-{
-	avl_index_t	 where;
-	vboxfs_node	 template;
-	vboxfs_node	*node;
-	int		 error = 0;
-	int		 type;
-	char		*fullpath;
-	sfp_file_t	*fp;
-	sffs_stat_t	 tmp_stat;
-
-	if (err)
-		*err = error;
-
-	/* handle referencing myself */
-	if (strcmp(name, "") == 0 || strcmp(name, ".") == 0)
-		return (dir);
-
-	/* deal with parent */
-	if (strcmp(name, "..") == 0)
-		return (dir->sf_parent);
-
-	/*
-	 * Look for an existing node.
-	 */
-	fullpath = sfnode_construct_path(dir, name);
-	template.sf_sffs = dir->sf_sffs;
-	template.sf_path = fullpath;
-	template.sf_is_stale = 0;
-	node = avl_find(&sfnodes, &template, &where);
-	if (node != NULL) {
-		free(fullpath, M_VBOXVFS);
-		if (create != VNON)
-			return (NULL);
-		return (node);
-	}
-
-	/*
-	 * No entry for this path currently.
-	 * Check if the file exists with the provider and get the type from
-	 * there.
-	 */
-	if (create == VREG) {
-		type = VREG;
-		stat = &tmp_stat;
-		error = sfprov_create(dir->sf_sffs->sf_handle, fullpath, c_mode,
-		    &fp, stat);
-		stat_time = sfnode_cur_time_usec();
-	} else if (create == VDIR) {
-		type = VDIR;
-		stat = &tmp_stat;
-		error = sfprov_mkdir(dir->sf_sffs->sf_handle, fullpath, c_mode,
-		    &fp, stat);
-		stat_time = sfnode_cur_time_usec();
-	} else {
-		mode_t m;
-		fp = NULL;
-		type = VNON;
-		if (stat == NULL) {
-			stat = &tmp_stat;
-			error = sfprov_get_attr(dir->sf_sffs->sf_handle,
-			    fullpath, stat);
-			stat_time = sfnode_cur_time_usec();
-		} else
-			error = 0;
-		m = stat->sf_mode;
-		if (error != 0)
-			error = ENOENT;
-		else if (S_ISDIR(m))
-			type = VDIR;
-		else if (S_ISREG(m))
-			type = VREG;
-		else if (S_ISLNK(m))
-			type = VLNK;
-	}
-
-	if (err)
-		*err = error;
-
-	/*
-	 * If no errors, make a new node and return it.
-	 */
-	if (error) {
-		kmem_free(fullpath, strlen(fullpath) + 1);
-		return (NULL);
-	}
-	node = sfnode_make(dir->sf_sffs, fullpath, type, fp, dir, stat,
-	    stat_time);
-	return (node);
-}
-#endif
 
 /*
  * Lookup an entry in a directory and create a new vnode if found.
