@@ -29,7 +29,6 @@ syssetup:
 		/var/db/ports/emulators_virtualbox-ose/options
 	cp -f ${.CURDIR}/additions.options \
 		/var/db/ports/emulators_virtualbox-ose-additions/options
-	${MAKE} -C ${.CURDIR}/mount_vboxfs clean obj depend all install
 	pkg install -y \
 		dbus \
 		expat \
@@ -85,6 +84,7 @@ cscope:
 
 # Do the build.  Only do this step after portsetup is done.
 build:
+	${MAKE} -C ${.CURDIR}/mount_vboxfs clean obj depend all
 	cd ${PORTPATH} && \
 		WRKSRC=`make -V WRKSRC` && \
 		cp -R ${.CURDIR}/vboxvfs/ $$WRKSRC/${VBOXVFS} && \
@@ -96,6 +96,7 @@ KLDS=	${ADDITIONS_KLDS}/vboxguest.ko \
 	${ADDITIONS_KLDS}/vboxvfs.ko
 
 install:
+	${MAKE} -C ${.CURDIR}/mount_vboxfs install
 	cd `${MAKE} -C ${PORTPATH} -V WRKSRC` && \
 		cp ${KLDS} /boot/modules && sync -a && sync -a && sync -a
 
