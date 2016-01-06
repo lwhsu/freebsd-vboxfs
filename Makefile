@@ -30,24 +30,11 @@ syssetup:
 	cp -f ${.CURDIR}/additions.options \
 		/var/db/ports/emulators_virtualbox-ose-additions/options
 	pkg install -y \
-		dbus \
 		expat \
 		gcc \
-		gsoap \
-		gtar \
-		iconv \
-		icu \
 		kBuild \
-		libidl \
 		pkgconf \
 		python \
-		qt4-gui \
-		qt4-moc \
-		qt4-network \
-		qt4-opengl \
-		qt4-rcc \
-		qt4-uic \
-		sdl \
 		yasm
 
 PORTMAKE=	${MAKE} SRC_BASE=${FREEBSD_SRC} BATCH=1 \
