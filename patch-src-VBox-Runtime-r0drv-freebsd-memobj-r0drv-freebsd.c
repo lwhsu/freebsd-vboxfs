@@ -1,5 +1,5 @@
---- src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c.orig	2015-03-02 15:10:04.000000000 +0000
-+++ src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c	2015-03-11 03:22:51.883857000 +0000
+--- src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c.orig	2015-11-10 21:23:50.000000000 +0000
++++ src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c	2016-01-06 15:31:55.190214000 +0000
 @@ -121,16 +121,15 @@
  
          case RTR0MEMOBJTYPE_LOCK:
@@ -60,14 +60,17 @@
      {
  #if __FreeBSD_version >= 1000030
          VM_OBJECT_WLOCK(pObject);
-@@ -220,18 +224,20 @@
+@@ -220,18 +224,23 @@
  #else
          VM_OBJECT_UNLOCK(pObject);
  #endif
 -        if (pPages)
 +        if (pPages || cTries >= 1)
++            break;
++#if __FreeBSD_version >= 1100092
++        if (!vm_page_reclaim_contig(fFlags, cPages, 0, VmPhysAddrHigh, uAlignment, 0))
              break;
-+#if __FreeBSD_version >= 1000015
++#elif __FreeBSD_version >= 1000015
          vm_pageout_grow_cache(cTries, 0, VmPhysAddrHigh);
 +#else
 +        vm_contig_grow_cache(cTries, 0, VmPhysAddrHigh);
@@ -86,7 +89,7 @@
              break;
          vm_contig_grow_cache(cTries, 0, VmPhysAddrHigh);
          cTries++;
-@@ -239,11 +245,8 @@
+@@ -239,11 +248,8 @@
  
      if (!pPages)
          return pPages;
@@ -99,7 +102,7 @@
      for (vm_pindex_t iPage = 0; iPage < cPages; iPage++)
      {
          vm_page_t pPage = pPages + iPage;
-@@ -255,13 +258,9 @@
+@@ -255,13 +261,9 @@
              atomic_add_int(&cnt.v_wire_count, 1);
          }
      }
@@ -113,7 +116,7 @@
  }
  
  static int rtR0MemObjFreeBSDPhysAllocHelper(vm_object_t pObject, u_long cPages,
-@@ -291,11 +290,15 @@
+@@ -291,11 +293,15 @@
              while (iPage-- > 0)
              {
                  pPage = vm_page_lookup(pObject, iPage);
@@ -129,7 +132,7 @@
              }
  #if __FreeBSD_version >= 1000030
              VM_OBJECT_WUNLOCK(pObject);
-@@ -515,10 +518,14 @@
+@@ -515,10 +521,14 @@
       * We could've used vslock here, but we don't wish to be subject to
       * resource usage restrictions, so we'll call vm_map_wire directly.
       */
@@ -148,7 +151,21 @@
      if (rc == KERN_SUCCESS)
      {
          pMemFreeBSD->Core.u.Lock.R0Process = R0Process;
-@@ -832,23 +839,6 @@
+@@ -743,7 +753,12 @@
+     {
+         /** @todo: is this needed?. */
+         PROC_LOCK(pProc);
+-        AddrR3 = round_page((vm_offset_t)pProc->p_vmspace->vm_daddr + lim_max(pProc, RLIMIT_DATA));
++        AddrR3 = round_page((vm_offset_t)pProc->p_vmspace->vm_daddr +
++#if __FreeBSD_version >= 1100077
++                            lim_max_proc(pProc, RLIMIT_DATA));
++#else
++                            lim_max(pProc, RLIMIT_DATA));
++#endif
+         PROC_UNLOCK(pProc);
+     }
+     else
+@@ -832,23 +847,6 @@
      switch (pMemFreeBSD->Core.enmType)
      {
          case RTR0MEMOBJTYPE_LOCK:
@@ -172,7 +189,7 @@
          case RTR0MEMOBJTYPE_MAPPING:
          {
              vm_offset_t pb = (vm_offset_t)pMemFreeBSD->Core.pv + ptoa(iPage);
-@@ -860,7 +850,8 @@
+@@ -860,7 +858,8 @@
                  pmap_t pPhysicalMap       = vm_map_pmap(pProcMap);
  
                  return pmap_extract(pPhysicalMap, pb);
