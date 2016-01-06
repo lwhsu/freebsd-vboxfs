@@ -1,8 +1,3 @@
-/** @file
- * VirtualBox File System for FreeBSD Guests, provider implementation.
- * Portions contributed by: Ronald.
- */
-
 /*
  * Copyright (C) 2008-2012 Oracle Corporation
  *
@@ -37,27 +32,32 @@
 #include <sys/mount.h>
 #include <sys/vnode.h>
 #include <sys/dirent.h>
+#include <sys/proc.h>
+#include <vm/vm.h>
+#include <vm/pmap.h>
+#include <vm/vm_kern.h>
+#include <vm/vm_map.h>
+#include <vm/vm_object.h>
+#include <vm/vm_extern.h>
 #include "vboxvfs.h"
 
-#define DIRENT_RECLEN(namelen)    ((sizeof(struct dirent) -               \
-                                    sizeof(((struct dirent *)NULL)->d_name) + \
-                                    (namelen) + 1 + 7) & ~7)
-#define DIRENT_NAMELEN(reclen)        \
-        (sizeof((reclen) - (sizeof(((struct dirent *)NULL)->d_name))))
+#define DIRENT_RECLEN(namelen)	((sizeof(struct dirent) -	\
+				sizeof(((struct dirent *)NULL)->d_name) + \
+				(namelen) + 1 + 7) & ~7)
+#define DIRENT_NAMELEN(reclen)	\
+	(sizeof((reclen) - (sizeof(((struct dirent *)NULL)->d_name))))
 
 static VBSFCLIENT vbox_client;
 
-static u_int vboxvfs_connected = 0;
-
-static sfp_connection_t *sfprov = NULL;
 extern u_int vboxvfs_debug;
 
-static int sfprov_vbox2errno(int rc)
+static int
+sfprov_vbox2errno(int rc)
 {
 	if (rc == VERR_ACCESS_DENIED)
 		return (EACCES);
 	if (rc == VERR_INVALID_NAME)
-	    return (ENOENT);
+		return (ENOENT);
 	return (RTErrConvertToErrno(rc));
 }
 
@@ -81,48 +81,36 @@ sfprov_string(char *path, int *sz)
 sfp_connection_t *
 sfprov_connect(int version)
 {
-        /*
-         * only one version for now, so must match
-         */
-        int error = -1;
-        if (version != SFPROV_VERSION)
-        {
-                printf("sfprov_connect: wrong version. version=%d expected=%d\n", version, SFPROV_VERSION);
-                return NULL;
-        }
-        error = vboxInit();
-        if (RT_SUCCESS(error))
-        {
-                error = vboxConnect(&vbox_client);
-                if (RT_SUCCESS(error))
-                {
-                        error = vboxCallSetUtf8(&vbox_client);
-                        if (RT_SUCCESS(error))
-                        {
-				vboxvfs_connected = 1;
-                                return ((sfp_connection_t *)&vbox_client);
-                        }
-                        else
-                                printf("sfprov_connect: vboxCallSetUtf8() failed\n");
+	/* only one version for now, so must match */
+	int error = -1;
 
-                        vboxDisconnect(&vbox_client);
-                }
-                else
-                        printf("sfprov_connect: vboxConnect() failed error=%d\n", error);
-                vboxUninit();
-        }
-        else
-                printf("sfprov_connect: vboxInit() failed error=%d\n", error);
-        return (NULL);
+	if (version != SFPROV_VERSION) {
+		printf("%s: version mismatch (%d, expected %d)\n", __func__,
+		    version, SFPROV_VERSION);
+		return (NULL);
+	}
+
+	if (RT_FAILURE(vboxInit()))
+		return (NULL);
+
+	if (RT_FAILURE(vboxConnect(&vbox_client))) {
+		vboxUninit();
+		return (NULL);
+	}
+
+	if (RT_FAILURE(vboxCallSetUtf8(&vbox_client))) {
+		vboxDisconnect(&vbox_client);
+		vboxUninit();
+		return (NULL);
+	}
+	return ((sfp_connection_t *)&vbox_client);
 }
 
 void
 sfprov_disconnect()
 {
-        if (sfprov != (sfp_connection_t *)&vbox_client)
-                printf("sfprov_disconnect: bad argument\n");
-        vboxDisconnect(&vbox_client);
-        vboxUninit();
+	vboxDisconnect(&vbox_client);
+	vboxUninit();
 }
 
 int
@@ -131,38 +119,62 @@ sfprov_mount(char *path, sfp_mount_t **mnt)
 	sfp_mount_t *m;
 	SHFLSTRING *str;
 	int size;
-	int error;
+	int rc;
 
 	VBOXVFS_DEBUG(1, "%s: Enter", __FUNCTION__);
 	VBOXVFS_DEBUG(1, "%s: path: [%s]", __FUNCTION__, path);
 
-	if (!vboxvfs_connected) {
-		sfprov = sfprov_connect(SFPROV_VERSION);
-		if (sfprov == NULL) {
-			printf("sfprov_mount: couldn't init sffs provider");
-			return (ENODEV);
-		}
-		error = sfprov_set_show_symlinks();
-		if (error != 0) {
-			printf("sffs_init: host unable to show symlinks, "
-					"error=%d\n", error);
-			return (EINVAL);
-		}
-	}
-
 	m = malloc(sizeof (*m),  M_VBOXVFS, M_WAITOK | M_ZERO);
 	str = sfprov_string(path, &size);
-	error = vboxCallMapFolder(&vbox_client, str, &m->map);
-	if (RT_FAILURE(error)) {
-		printf("sfprov_mount: vboxCallMapFolder() failed error=%d\n", error);
+
+	/*
+	 * malloc() memory on FreeBSD is always wired.
+	 * Here, the call chain looks like this:
+	 *
+	 * vboxCallMapFolder
+	 *   VbglHGCMCall
+	 *     vbglDriverIOCtl
+	 *       VBoxGuestIDCCall
+	 *         g_VBoxGuest->_VBoxGuestIDCCall (VBoxGuestIDCCall)
+	 *           VBoxGuestCommonIOCtl
+	 *             VBoxGuestCommonIOCtl_HGCMCall
+	 *               VbglR0HGCMInternalCall
+	 *                 vbglR0HGCMInternalPreprocessCall
+	 *                   RTR0MemObjLockKernel
+	 *                     RTR0MemObjLockKernelTag
+	 *                       rtR0MemObjNativeLockKernelTag
+	 *                         rtR0MemObjNativeLockKernel
+	 *                           rtR0MemObjNativeLockInMap
+	 *
+	 * In VbglR0HGCMInternalCall, VMMDevHGCMParmType_LinAddr_Locked_In
+	 * tells VBox that the memory is already wired.  However,
+	 * vboxCallMapFolder() uses VMMDevHGCMParmType_LinAddr instead.
+	 *
+	 * Q: Are there other things already supported on FreeBSD that go
+	 *    through VbglHGCMCall?  Do they use this parameter type?
+	 * A: No, all callers of VbglHGCMCall() are for shared folders!
+	 *    And none of the call stack can be reached on FreeBSD except
+	 *    through the shared folders implementation.
+	 * Q: But Solaris does the malloc approach too!
+	 * A: Yes, but in rtR0MemObjSolLock(), it does nothing if the
+	 *    address is in kernel memory, because they are "always locked",
+	 *    so in that function it "only handles user-space memory".
+	 *    So all we need to do is always pass in malloc'd memory, and
+	 *    fix rtR0MemObjNativeLockKernel() to do the same thing.  As
+	 *    well as other places that need similar logic.
+	 */
+	int error;
+	rc = vboxCallMapFolder(&vbox_client, str, &m->map);
+	if (RT_FAILURE(rc)) {
 		free(m, M_VBOXVFS);
 		*mnt = NULL;
-		error = EINVAL;
+		error = sfprov_vbox2errno(rc);
 	} else {
 		*mnt = m;
 		error = 0;
 	}
 	free(str, M_VBOXVFS);
+	printf("%s(%s): error=%d rc=%d\n", __func__, path, error, rc);
 	return (error);
 }
 
@@ -174,7 +186,7 @@ sfprov_unmount(sfp_mount_t *mnt)
 	rc = vboxCallUnmapFolder(&vbox_client, &mnt->map);
 	if (RT_FAILURE(rc)) {
 		printf("sfprov_unmount: vboxCallUnmapFolder() failed rc=%d\n", rc);
-		rc = EINVAL;
+		rc = sfprov_vbox2errno(rc);
 	} else {
 		rc = 0;
 	}
@@ -192,17 +204,22 @@ sfprov_get_fsinfo(sfp_mount_t *mnt, sffs_fsinfo_t *fsinfo)
 	int rc;
 	SHFLVOLINFO info;
 	uint32_t bytes = sizeof(SHFLVOLINFO);
+	size_t bytesused;
 
 	rc = vboxCallFSInfo(&vbox_client, &mnt->map, 0,
 	    (SHFL_INFO_GET | SHFL_INFO_VOLUME), &bytes, (SHFLDIRINFO *)&info);
 	if (RT_FAILURE(rc))
-		return (EINVAL);
+		return (sfprov_vbox2errno(rc));
 
 	fsinfo->blksize = info.ulBytesPerAllocationUnit;
-	fsinfo->blksused = (info.ullTotalAllocationBytes - info.ullAvailableAllocationBytes) / info.ulBytesPerAllocationUnit;
-	fsinfo->blksavail = info.ullAvailableAllocationBytes / info.ulBytesPerAllocationUnit;
+	bytesused =
+	    info.ullTotalAllocationBytes - info.ullAvailableAllocationBytes;
+	fsinfo->blksused = bytesused / info.ulBytesPerAllocationUnit;
+	fsinfo->blksavail = info.ullAvailableAllocationBytes /
+	    info.ulBytesPerAllocationUnit;
 	fsinfo->maxnamesize = info.fsProperties.cbMaxComponent;
 	fsinfo->readonly = info.fsProperties.fReadOnly;
+	fsinfo->serial = info.ulSerial;
 	return (0);
 }
 
@@ -345,11 +362,7 @@ sfprov_create(
 	free(str, M_VBOXVFS);
 
 	if (RT_FAILURE(rc))
-	{
-		if (rc != VERR_ACCESS_DENIED && rc != VERR_WRITE_PROTECT)
-			printf("sfprov_create: vboxCallCreate failed! path=%s rc=%d\n", path, rc);
 		return (sfprov_vbox2errno(rc));
-	}
 	if (parms.Handle == SHFL_HANDLE_NIL) {
 		if (parms.Result == SHFL_FILE_EXISTS)
 			return (EEXIST);
@@ -433,7 +446,7 @@ sfprov_trunc(sfp_mount_t *mnt, char *path)
 	free(str, M_VBOXVFS);
 
 	if (RT_FAILURE(rc)) {
-		return (EINVAL);
+		return (sfprov_vbox2errno(rc));
 	}
 	(void)vboxCallClose(&vbox_client, &mnt->map, parms.Handle);
 	return (0);
@@ -450,26 +463,28 @@ sfprov_close(sfp_file_t *fp)
 }
 
 int
-sfprov_read(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes)
+sfprov_read(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes,
+    int buflocked)
 {
 	int rc;
 
 	rc = vboxCallRead(&vbox_client, &fp->map, fp->handle, offset,
-	    numbytes, (uint8_t *)buffer, 0);	/* what is that last arg? */
+	    numbytes, (uint8_t *)buffer, buflocked);
 	if (RT_FAILURE(rc))
-		return (EINVAL);
+		return (sfprov_vbox2errno(rc));
 	return (0);
 }
 
 int
-sfprov_write(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes)
+sfprov_write(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes,
+    int buflocked)
 {
 	int rc;
 
 	rc = vboxCallWrite(&vbox_client, &fp->map, fp->handle, offset,
-	    numbytes, (uint8_t *)buffer, 0);	/* what is that last arg? */
+	    numbytes, (uint8_t *)buffer, buflocked);
 	if (RT_FAILURE(rc))
-		return (EINVAL);
+		return (sfprov_vbox2errno(rc));
 	return (0);
 }
 
@@ -480,7 +495,7 @@ sfprov_fsync(sfp_file_t *fp)
 
 	rc = vboxCallFlush(&vbox_client, &fp->map, fp->handle);
 	if (RT_FAILURE(rc))
-		return (EIO);
+		return (sfprov_vbox2errno(rc));
 	return (0);
 }
 
@@ -501,7 +516,7 @@ sfprov_getinfo(sfp_mount_t *mnt, char *path, PSHFLFSOBJINFO info)
 	free(str, M_VBOXVFS);
 
 	if (RT_FAILURE(rc))
-		return (EINVAL);
+		return (sfprov_vbox2errno(rc));
 	if (parms.Result != SHFL_FILE_EXISTS)
 		return (ENOENT);
 	*info = parms.Info;
@@ -625,7 +640,7 @@ sfprov_set_attr(
 	if (RT_FAILURE(rc)) {
 		printf("sfprov_set_attr: vboxCallCreate(%s) failed rc=%d\n",
 		    path, rc);
-		err = EINVAL;
+		err = sfprov_vbox2errno(rc);
 		goto fail2;
 	}
 	if (parms.Result != SHFL_FILE_EXISTS) {
@@ -692,7 +707,7 @@ sfprov_set_size(sfp_mount_t *mnt, char *path, uint64_t size)
 	if (RT_FAILURE(rc)) {
 		printf("sfprov_set_size: vboxCallCreate(%s) failed rc=%d\n",
 		    path, rc);
-		err = EINVAL;
+		err = sfprov_vbox2errno(rc);
 		goto fail2;
 	}
 	if (parms.Result != SHFL_FILE_EXISTS) {
@@ -982,11 +997,15 @@ sfprov_readdir(
 		 * Create the dirent_t's and save the stats for each name
 		 */
 		for (info = infobuff; (char *) info < (char *) infobuff + numbytes; nents--) {
+			size_t buflen;
+
 			/* expand buffers if we need more space */
 			reclen = DIRENT_RECLEN(strlen(info->name.String.utf8));
 			entlen = sizeof(sffs_stat_t) + reclen;
-			if (SFFS_DIRENTS_OFF + cur_buf->sf_len + entlen > SFFS_DIRENTS_SIZE) {
-				cur_buf->sf_next = malloc(SFFS_DIRENTS_SIZE, M_VBOXVFS, M_WAITOK | M_ZERO);
+			buflen = SFFS_DIRENTS_OFF + cur_buf->sf_len + entlen;
+			if (buflen > SFFS_DIRENTS_SIZE) {
+				cur_buf->sf_next = malloc(SFFS_DIRENTS_SIZE,
+				    M_VBOXVFS, M_WAITOK | M_ZERO);
 				if (cur_buf->sf_next == NULL) {
 					error = ENOSPC;
 					goto done;
@@ -999,7 +1018,8 @@ sfprov_readdir(
 			/* create the dirent with the name, offset, and len */
 			dirent = (struct sffs_dirent *)
 			    (((char *) &cur_buf->sf_entries[0]) + cur_buf->sf_len);
-			strncpy(&dirent->sf_entry.d_name[0], info->name.String.utf8, DIRENT_NAMELEN(reclen));
+			strncpy(&dirent->sf_entry.d_name[0],
+			    info->name.String.utf8, DIRENT_NAMELEN(reclen));
 			dirent->sf_entry.d_reclen = reclen;
 			offset += entlen;
 			//dirent->sf_entry.d_off = offset;

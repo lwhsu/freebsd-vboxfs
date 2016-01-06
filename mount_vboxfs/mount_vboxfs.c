@@ -26,6 +26,7 @@
 * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 * SUCH DAMAGE.
 */
+
 #include <sys/cdio.h>
 #include <sys/stat.h>
 #include <sys/file.h>
@@ -35,7 +36,7 @@
 #include <sys/module.h>
 #include <sys/mount.h>
 #include <sys/uio.h>
-	
+
 #include <err.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -51,26 +52,23 @@ static char mount_point[MAXPATHLEN + 1];
 static char vboxfs_vfsname[] = "vboxvfs";
 static struct mntopt mopts[] = {
 	MOPT_STDOPTS,
-        MOPT_END
+	MOPT_END
 };
 
 static void usage(void) __dead2;
 
-/**
-  * Print out a usage message and exit.
-  *
-  * @param name The name of the application
-  */
 static void 
 usage(void)
 {
-    printf("Usage: [OPTIONS] NAME MOUNTPOINT\n"
-           "Mount the VirtualBox shared folder NAME from the host system to MOUNTPOINT.\n"
-           "\n"
-           "  -w                    mount the shared folder writable \n"
-           "  -r                    mount the shared folder read-only (the default)\n");
-    exit(1);
+	fprintf(stderr,
+	    "Usage: [OPTIONS] NAME MOUNTPOINT\n"
+	    "Mount the VirtualBox shared folder NAME to MOUNTPOINT.\n"
+	    "\nOptions:\n"
+	    "  -w    mount the shared folder writable \n"
+	    "  -r    mount the shared folder read-only (the default)\n");
+	exit(1);
 }
+
 int
 main(int argc, char *argv[])
 {
@@ -82,7 +80,8 @@ main(int argc, char *argv[])
 	gid_t gid;
 	mode_t dir_mode, file_mode;
 	int iovlen;
-	int error, ch, ronly = 0;
+	int ronly = 0;
+	int error, ch;
 	int mntflags;
 
 	iov = NULL;
@@ -92,31 +91,33 @@ main(int argc, char *argv[])
 	gid = (gid_t)-1;
 	file_mode = 0;
 	dir_mode = 0;
-	
+
 	while ((ch = getopt(argc, argv, "rwo:h")) != -1)
 		switch(ch) {
-			default:
-                		fprintf(stderr, "unknown option `%c:%#x'\n", ch, ch);
-            		case '?':
-            		case 'h':
-                		usage();
-            		case 'r':
-                		ronly= 1;
-                		break;
-            		case 'w':
-                		ronly = 0;
-				break;
-            		case 'o':
-				getmntopts(optarg, mopts, &mntflags, 0);
-				break;
-                	break;
+		default:
+			fprintf(stderr, "unknown option `%c:%#x'\n", ch, ch);
+			return (1);
+
+		case '?':
+		case 'h':
+			usage();
+		case 'r':
+			ronly = 1;
+			break;
+		case 'w':
+			ronly = 0;
+			break;
+		case 'o':
+			getmntopts(optarg, mopts, &mntflags, 0);
+			break;
 		}
+
 	if (argc - optind < 2)
 		usage();
 
 	host_name = argv[optind];
 	realpath(argv[optind+1], mount_point);
-		
+
 	if (stat(mount_point, &st) == -1)
 		err(EX_OSERR, "could not find mount point %s", mount_point);
 
@@ -126,68 +127,44 @@ main(int argc, char *argv[])
 	}
 
 	if (strlen(host_name) > MAX_HOST_NAME - 1)
-            	err(EX_OSERR, "host name is too big %s", host_name);
-	
-	if (!ronly)
-        	mntflags |= MNT_ASYNC;
+		err(EX_OSERR, "host name is too big %s", host_name);
+
+	if (ronly == 0)
+		mntflags |= MNT_ASYNC;
 	if (uid == (uid_t)-1)
 		uid = st.st_uid;
 	if (gid == (gid_t)-1)
 		gid = st.st_gid;
-	if (file_mode == 0 )
+	if (file_mode == 0)
 		file_mode = st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
 	if (dir_mode == 0) {
 		dir_mode = file_mode;
-	if (dir_mode & S_IRUSR)
-		dir_mode |= S_IXUSR;
-	if (dir_mode & S_IRGRP)
-		dir_mode |= S_IXGRP;
-	if (dir_mode & S_IROTH)
-		dir_mode |= S_IXOTH;
+		if (dir_mode & S_IRUSR)
+			dir_mode |= S_IXUSR;
+		if (dir_mode & S_IRGRP)
+			dir_mode |= S_IXGRP;
+		if (dir_mode & S_IROTH)
+			dir_mode |= S_IXOTH;
 	}
-	
-	/*
-	 * VBOXFS file systems are not writeable.
-	 */
+
+	/* VBOXFS file systems are not currently writeable. */
 	mntflags |= MNT_RDONLY;
 	build_iovec(&iov, &iovlen, "fstype", vboxfs_vfsname, (size_t)-1);
 	build_iovec(&iov, &iovlen, "fspath", mount_point, (size_t)-1);
 	build_iovec(&iov, &iovlen, "from", host_name, (size_t)-1);
 	build_iovec_argf(&iov, &iovlen, "uid", "%d", uid);
 	build_iovec_argf(&iov, &iovlen, "gid", "%d", gid);
-	build_iovec_argf(&iov, &iovlen, "file_mode", "%d", file_mode);
-	build_iovec_argf(&iov, &iovlen, "dir_mode", "%d", dir_mode);
+	build_iovec_argf(&iov, &iovlen, "file_mode", "%o", file_mode);
+	build_iovec_argf(&iov, &iovlen, "dir_mode", "%o", dir_mode);
 	build_iovec(&iov, &iovlen, "errmsg", errmsg, sizeof(errmsg));
 
 	error = nmount(iov, iovlen, mntflags);
-
-    	if (error == -1 && errno == EPROTO)
-    	{
-        	/* Sometimes the mount utility messes up the share name.  Try to
-         	 * un-mangle it again. */
-        	char szCWD[4096];
-        	size_t cchCWD;
-
-        		cchCWD = strlen(szCWD);
-        	if (!strncmp(host_name, szCWD, cchCWD))
-        	{
-            		while (host_name[cchCWD] == '/')
-                		++cchCWD;
-            		/* We checked before that we have enough space */
-            		strcpy(host_name, host_name + cchCWD);
-        	}
-		error = nmount(iov, iovlen, mntflags);
+	if (error == -1) {
+		if (errmsg[0] != '\0')
+			err(1, "%s: error: %s", mount_point, errmsg);
+		else
+			err(1, "%s: error %d", mount_point, error);
 	}
 
-	if (error) {
-		if (errmsg[0] != 0) {
-			err(1,"mount error: %d %s %s", error, mount_point, errmsg);
-			exit(1);
-		} else {
-			err(1, "mount error: %d %s", error, mount_point);
-			exit(1);
-		}
-	}
-
-	return 0;
+	return (0);
 }
