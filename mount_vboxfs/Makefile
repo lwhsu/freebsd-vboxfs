@@ -7,7 +7,7 @@ MAN=		mount_vboxfs.8
 
 FREEBSD_SRC?=	${.CURDIR}/../../freebsd
 .if !exists(${FREEBSD_SRC})
-FREEBSD_SRC?=	/usr/src
+FREEBSD_SRC=	/usr/src
 .endif
 MOUNT=		${FREEBSD_SRC}/sbin/mount
 
