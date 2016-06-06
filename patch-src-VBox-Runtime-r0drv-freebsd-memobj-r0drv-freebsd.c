@@ -1,5 +1,5 @@
---- src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c.orig	2015-11-10 21:23:50.000000000 +0000
-+++ src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c	2016-01-06 15:31:55.190214000 +0000
+--- src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c.orig	2016-04-20 10:02:37.000000000 +0000
++++ src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c	2016-06-06 19:51:14.915079000 +0000
 @@ -121,16 +121,15 @@
  
          case RTR0MEMOBJTYPE_LOCK:
@@ -8,18 +8,15 @@
 -
 -            if (pMemFreeBSD->Core.u.Lock.R0Process != NIL_RTR0PROCESS)
 -                pMap = &((struct proc *)pMemFreeBSD->Core.u.Lock.R0Process)->p_vmspace->vm_map;
-+            struct proc *proc = (struct proc *)pMemFreeBSD->Core.u.Lock.R0Process;
++            if (pMemFreeBSD->Core.u.Lock.R0Process != NIL_RTR0PROCESS) {
++                vm_map_t pMap = &((struct proc *)pMemFreeBSD->Core.u.Lock.R0Process)->p_vmspace->vm_map;
  
 -            rc = vm_map_unwire(pMap,
--                               (vm_offset_t)pMemFreeBSD->Core.pv,
--                               (vm_offset_t)pMemFreeBSD->Core.pv + pMemFreeBSD->Core.cb,
--                               VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_NOHOLES);
++                rc = vm_map_unwire(pMap,
+                                (vm_offset_t)pMemFreeBSD->Core.pv,
+                                (vm_offset_t)pMemFreeBSD->Core.pv + pMemFreeBSD->Core.cb,
+                                VM_MAP_WIRE_SYSTEM | VM_MAP_WIRE_NOHOLES);
 -            AssertMsg(rc == KERN_SUCCESS, ("%#x", rc));
-+            if (proc != NIL_RTR0PROCESS) {
-+                rc = vm_map_unwire(&proc->p_vmspace->vm_map,
-+                                   (vm_offset_t)pMemFreeBSD->Core.pv,
-+                                   (vm_offset_t)pMemFreeBSD->Core.pv + pMemFreeBSD->Core.cb,
-+                                   VM_MAP_WIRE_USER | VM_MAP_WIRE_NOHOLES);
 +                AssertMsg(rc == KERN_SUCCESS, ("%#x", rc));
 +            }
              break;
@@ -132,26 +129,35 @@
              }
  #if __FreeBSD_version >= 1000030
              VM_OBJECT_WUNLOCK(pObject);
-@@ -515,10 +521,14 @@
-      * We could've used vslock here, but we don't wish to be subject to
-      * resource usage restrictions, so we'll call vm_map_wire directly.
-      */
+@@ -511,14 +517,19 @@
+     if (!pMemFreeBSD)
+         return VERR_NO_MEMORY;
+ 
+-    /*
+-     * We could've used vslock here, but we don't wish to be subject to
+-     * resource usage restrictions, so we'll call vm_map_wire directly.
+-     */
 -    rc = vm_map_wire(pVmMap,                                         /* the map */
 -                     AddrStart,                                      /* start */
 -                     AddrStart + cb,                                 /* end */
 -                     fFlags);                                        /* flags */
-+    if ((fFlags & VM_MAP_WIRE_USER) == VM_MAP_WIRE_USER)
++    if (pVmMap != kernel_map) {
++        /*
++         * We could've used vslock here, but we don't wish to be subject to
++         * resource usage restrictions, so we'll call vm_map_wire directly.
++         */
 +        rc = vm_map_wire(pVmMap,                                         /* the map */
 +                         AddrStart,                                      /* start */
 +                         AddrStart + cb,                                 /* end */
 +                         fFlags);                                        /* flags */
++    }
 +    else
 +        rc = KERN_SUCCESS;
 +
      if (rc == KERN_SUCCESS)
      {
          pMemFreeBSD->Core.u.Lock.R0Process = R0Process;
-@@ -743,7 +753,12 @@
+@@ -743,7 +754,12 @@
      {
          /** @todo: is this needed?. */
          PROC_LOCK(pProc);
@@ -165,37 +171,23 @@
          PROC_UNLOCK(pProc);
      }
      else
-@@ -832,23 +847,6 @@
-     switch (pMemFreeBSD->Core.enmType)
-     {
-         case RTR0MEMOBJTYPE_LOCK:
--        {
--            if (    pMemFreeBSD->Core.u.Lock.R0Process != NIL_RTR0PROCESS
--                &&  pMemFreeBSD->Core.u.Lock.R0Process != (RTR0PROCESS)curproc)
--            {
--                /* later */
--                return NIL_RTHCPHYS;
--            }
--
--            vm_offset_t pb = (vm_offset_t)pMemFreeBSD->Core.pv + ptoa(iPage);
--
+@@ -842,11 +858,15 @@
+ 
+             vm_offset_t pb = (vm_offset_t)pMemFreeBSD->Core.pv + ptoa(iPage);
+ 
 -            struct proc    *pProc     = (struct proc *)pMemFreeBSD->Core.u.Lock.R0Process;
 -            struct vm_map  *pProcMap  = &pProc->p_vmspace->vm_map;
 -            pmap_t pPhysicalMap       = vm_map_pmap(pProcMap);
--
--            return pmap_extract(pPhysicalMap, pb);
--        }
--
-         case RTR0MEMOBJTYPE_MAPPING:
-         {
-             vm_offset_t pb = (vm_offset_t)pMemFreeBSD->Core.pv + ptoa(iPage);
-@@ -860,7 +858,8 @@
-                 pmap_t pPhysicalMap       = vm_map_pmap(pProcMap);
++            if (pMemFreeBSD->Core.u.Mapping.R0Process != NIL_RTR0PROCESS)
++            {
++                struct proc    *pProc     = (struct proc *)pMemFreeBSD->Core.u.Lock.R0Process;
++                struct vm_map  *pProcMap  = &pProc->p_vmspace->vm_map;
++                pmap_t pPhysicalMap       = vm_map_pmap(pProcMap);
  
-                 return pmap_extract(pPhysicalMap, pb);
--            }
-+            } else if (pMemFreeBSD->Core.u.Mapping.R0Process != (RTR0PROCESS)curproc)
-+                return NIL_RTHCPHYS;
-             return vtophys(pb);
+-            return pmap_extract(pPhysicalMap, pb);
++                return pmap_extract(pPhysicalMap, pb);
++            }
++            return vtophys(pb);
          }
  
+         case RTR0MEMOBJTYPE_MAPPING:
