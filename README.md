@@ -25,7 +25,7 @@ To build:
 cp -R $(freebsd-vboxsf)/mount_vboxfs /usr/src/sbin
 cd /usr/src/sbin/mount_vboxfs && make depend all install
 
-cp $(freebsd-vboxsf)/patch-src-VBox-Additions-freebsd-Makefile.kmk /usr/ports/emulators/virtualbox-ose/files
+cp $(freebsd-vboxsf)/patch-* /usr/ports/emulators/virtualbox-ose/files
 
 cd /usr/ports/emulators/virtualbox-ose-additions
 make patch
