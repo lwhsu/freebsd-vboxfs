@@ -194,6 +194,7 @@ typedef struct sffs_dirents {
 	struct sffs_dirent {
 		sffs_stat_t	sf_stat;
 		struct dirent	sf_entry;	/* this is variable length */
+		off_t sf_off;
 	} sf_entries[1];
 } sffs_dirents_t;
 

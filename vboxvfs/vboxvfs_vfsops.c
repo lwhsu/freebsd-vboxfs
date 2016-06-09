@@ -168,6 +168,7 @@ vboxfs_mount(struct mount *mp)
 	vboxfsmp->sf_gid = gid;
 	vboxfsmp->sf_fmode = file_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
 	vboxfsmp->sf_dmode = dir_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+	vboxfsmp->sf_ino = 3;
 
 	/* Invoke Hypervisor mount interface before proceeding */
 	error = sfprov_mount(share_name, &handle);
@@ -251,7 +252,15 @@ vboxfs_unmount(struct mount *mp, int mntflags)
 static int
 vboxfs_root(struct mount *mp, int flags, struct vnode **vpp)
 {
-	return (vboxfs_vget(mp, (ino_t)1, flags, vpp));	
+	int error;
+	struct vboxfs_node *unode;
+
+	error = (vboxfs_vget(mp, (ino_t)ROOTDIR_INO, flags, vpp));
+	if (!error) {
+		unode = (*vpp)->v_data;
+		unode->sf_path = strdup("/", M_VBOXVFS);
+	}
+	return (error);
 }
 
 int
@@ -305,14 +314,14 @@ vboxfs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 		return (error);
 
 	switch (ino) {
-	default:
-		vp->v_type = VBAD;
-		break;
 	case ROOTDIR_INO:
 		vp->v_type = VDIR;
 		break;
 	case THEFILE_INO:
 		vp->v_type = VREG;
+		break;
+	default:
+		vp->v_type = VBAD;
 		break;
 	}
 

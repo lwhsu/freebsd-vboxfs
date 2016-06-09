@@ -125,7 +125,7 @@ vboxfs_access(struct vop_access_args *ap)
 #endif 
 	struct vnode *vp = ap->a_vp;
 	accmode_t accmode = ap->a_accmode;
-   
+
 	if ((accmode & VWRITE) && (vp->v_mount->mnt_flag & MNT_RDONLY)) {
 		switch (vp->v_type) {
 		case VDIR:
@@ -462,6 +462,7 @@ vboxfs_rmdir(struct vop_rmdir_args *ap)
 static int
 vboxfs_readdir(struct vop_readdir_args *ap)
 {
+	int *eofp = ap->a_eofflag;
 	struct vnode *vp = ap->a_vp;
 	struct uio *uio = ap->a_uio;
 	struct vboxfs_node *dir = VTOVBOXFS(vp);
@@ -469,30 +470,28 @@ vboxfs_readdir(struct vop_readdir_args *ap)
 	struct sffs_dirent *dirent = NULL;
 	sffs_dirents_t *cur_buf;
 	off_t offset = 0;
-	//off_t orig_off = uio->uio_offset;
+	off_t orig_off = uio->uio_offset;
 	int error = 0;
+	int dummy_eof;
 #if 0
-	if (uio->uio_iovcnt != 1)
-		return (EINVAL);
-
 	if (vp->v_type != VDIR)
 		return (ENOTDIR);
-
-	if (eofp == NULL)
-		eofp = &dummy_eof;
-	*eofp = 0;
 
 	if (uio->uio_loffset >= MAXOFFSET_T) {
 		*eofp = 1;
 		return (0);
 	}
 #endif
+
+	if (eofp == NULL)
+		eofp = &dummy_eof;
+	*eofp = 0;
+
 	/*
 	 * Get the directory entry names from the host. This gets all
 	 * entries. These are stored in a linked list of sffs_dirents_t
 	 * buffers, each of which contains a list of dirent64_t's.
 	 */
-
 	if (dir->sf_dir_list == NULL) {
 		error = sfprov_readdir(dir->vboxfsmp->sf_handle, dir->sf_path,
 		    &dir->sf_dir_list);
@@ -510,7 +509,7 @@ vboxfs_readdir(struct vop_readdir_args *ap)
 		offset += cur_buf->sf_len;
 		cur_buf = cur_buf->sf_next;
 	}
-	
+
 	if (cur_buf == NULL && offset != uio->uio_offset) {
 		error = EINVAL;
 		goto done;
@@ -522,6 +521,8 @@ vboxfs_readdir(struct vop_readdir_args *ap)
 		dirent = &cur_buf->sf_entries[0];
 
 		while (off < uio->uio_offset) {
+                        if (dirent->sf_off == uio->uio_offset)
+                                break;
 			step = sizeof(sffs_stat_t) + dirent->sf_entry.d_reclen;
 			dirent = (struct sffs_dirent *) (((char *) dirent) + step);
 			off += step;
@@ -559,25 +560,31 @@ vboxfs_readdir(struct vop_readdir_args *ap)
 				node = dir;
 		} else {
 #if 0
-		node = sfnode_lookup(dir, dirent->sf_entry.d_name, VNON,
-		    0, &dirent->sf_stat, sfnode_cur_time_usec(), NULL);
-		if (node == NULL)
-			panic("sffs_readdir() lookup failed");
+			node = sfnode_lookup(dir, dirent->sf_entry.d_name, VNON,
+			    0, &dirent->sf_stat, sfnode_cur_time_usec(), NULL);
+			if (node == NULL)
+				panic("sffs_readdir() lookup failed");
 #endif
 		}
+
+		if (node)
+			dirent->sf_entry.d_fileno = node->sf_ino;
+		else
+			dirent->sf_entry.d_fileno = 0xdeadbeef;
 
 		error = uiomove(&dirent->sf_entry, dirent->sf_entry.d_reclen, uio);
 		if (error != 0)
 			break;
 
-		uio->uio_offset = dirent->sf_entry.d_fileno;
+		uio->uio_offset = dirent->sf_off;
 		offset += sizeof(sffs_stat_t) + dirent->sf_entry.d_reclen;
 	}
+
+	if (error == 0 && cur_buf == NULL)
+		*eofp = 1;
 done:
-#if 0
 	if (error != 0)
 		uio->uio_offset = orig_off;
-#endif
 	return (error);
 }
 

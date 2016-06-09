@@ -41,11 +41,10 @@
 #include <vm/vm_extern.h>
 #include "vboxvfs.h"
 
-#define DIRENT_RECLEN(namelen)	((sizeof(struct dirent) -	\
-				sizeof(((struct dirent *)NULL)->d_name) + \
-				(namelen) + 1 + 7) & ~7)
-#define DIRENT_NAMELEN(reclen)	\
-	(sizeof((reclen) - (sizeof(((struct dirent *)NULL)->d_name))))
+#define DIRENT_RECLEN(namelen)    \
+	((offsetof(struct dirent, d_name[0]) + 1 + (namelen) + 7) & ~ 7)
+#define DIRENT_NAMELEN(reclen)    \
+	((reclen) - (offsetof(struct dirent, d_name[0])))
 
 static VBSFCLIENT vbox_client;
 
@@ -977,17 +976,15 @@ sfprov_readdir(
 		numbytes = infobuff_alloc;
 		error = vboxCallDirInfo(&vbox_client, &fp->map, fp->handle,
 		    mask_str, 0, 0, &numbytes, infobuff, &nents);
-		switch (error) {
 
+		switch (error) {
 		case VINF_SUCCESS:
 			/* fallthrough */
 		case VERR_NO_MORE_FILES:
 			break;
-
 		case VERR_NO_TRANSLATION:
 			/* XXX ??? */
 			break;
-
 		default:
 			error = sfprov_vbox2errno(error);
 			goto done;
@@ -1021,8 +1018,10 @@ sfprov_readdir(
 			strncpy(&dirent->sf_entry.d_name[0],
 			    info->name.String.utf8, DIRENT_NAMELEN(reclen));
 			dirent->sf_entry.d_reclen = reclen;
+			dirent->sf_entry.d_namlen = strlen(info->name.String.utf8);
+			dirent->sf_entry.d_name[dirent->sf_entry.d_namlen] = 0;
 			offset += entlen;
-			//dirent->sf_entry.d_off = offset;
+			dirent->sf_off = offset;
 
 			/* save the stats */
 			sfprov_stat_from_info(&dirent->sf_stat, &info->Info);
@@ -1053,5 +1052,6 @@ done:
 	if (mask_str != NULL)
 		free(mask_str, M_VBOXVFS);
 	sfprov_close(fp);
+
 	return (error);
 }
