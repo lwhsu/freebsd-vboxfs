@@ -46,7 +46,7 @@ static vop_write_t	vboxfs_write;
 static vop_fsync_t	vboxfs_fsync;
 static vop_remove_t	vboxfs_remove;
 static vop_link_t	vboxfs_link;
-static vop_lookup_t	vboxfs_lookup;
+static vop_cachedlookup_t	vboxfs_lookup;
 static vop_rename_t	vboxfs_rename;
 static vop_mkdir_t	vboxfs_mkdir;
 static vop_rmdir_t	vboxfs_rmdir;
@@ -77,7 +77,8 @@ struct vop_vector vboxfs_vnodeops = {
 	.vop_inactive	= vboxfs_inactive,
 	.vop_ioctl	= vboxfs_ioctl,
 	.vop_link	= vboxfs_link,
-	.vop_lookup	= vboxfs_lookup,
+	.vop_lookup	= vfs_cache_lookup,
+	.vop_cachedlookup	= vboxfs_lookup,
 	.vop_mkdir	= vboxfs_mkdir,
 	.vop_mknod	= vboxfs_mknod,
 	.vop_open	= vboxfs_open,
@@ -96,33 +97,272 @@ struct vop_vector vboxfs_vnodeops = {
 	.vop_write	= vboxfs_write,
 };
 
-int
-vboxfs_allocv(struct mount *mp, struct vnode **vpp, struct thread *td)
+static uint64_t
+vsfnode_cur_time_usec(void)
+{
+        struct timeval now;
+
+        getmicrotime(&now);
+
+	return (now.tv_sec*1000 + now.tv_usec);
+}
+
+static int
+vsfnode_stat_cached(struct vboxfs_node *np)
+{
+	return (vsfnode_cur_time_usec() - np->sf_stat_time) <
+	    np->vboxfsmp->sf_stat_ttl * 1000UL;
+}
+
+static int
+vsfnode_update_stat_cache(struct vboxfs_node *np)
 {
 	int error;
-	struct vnode *vp;
 
-	error = getnewvnode("vboxfs", mp, &vboxfs_vnodeops, &vp);
-	if (error) {
-		printf("vboxfs_allocv: failed to allocate new vnode\n");
-		return (error);
+	error = sfprov_get_attr(np->vboxfsmp->sf_handle, np->sf_path,
+	    &np->sf_stat);
+#if 0
+	if (error == ENOENT)
+		sfnode_make_stale(node);
+#endif
+	if (error == 0)
+		np->sf_stat_time = vsfnode_cur_time_usec();
+
+	return (error);
+}
+
+/*
+ * Need to clear v_object for insmntque failure.
+ */
+static void
+vboxfs_insmntque_dtr(struct vnode *vp, void *dtr_arg)
+{
+
+	// XXX: vboxfs_destroy_vobject(vp, vp->v_object);
+	vp->v_object = NULL;
+	vp->v_data = NULL;
+	vp->v_op = &dead_vnodeops;
+	vgone(vp);
+	vput(vp);
+}
+
+/*
+ * Allocates a new vnode for the node node or returns a new reference to
+ * an existing one if the node had already a vnode referencing it.  The
+ * resulting locked vnode is returned in *vpp.
+ *
+ * Returns zero on success or an appropriate error code on failure.
+ */
+int
+vboxfs_alloc_vp(struct mount *mp, struct vboxfs_node *node, int lkflag,
+    struct vnode **vpp)
+{
+	struct vnode *vp;
+	int error;
+
+	error = 0;
+loop:
+	VBOXFS_NODE_LOCK(node);
+loop1:
+	if ((vp = node->sf_vnode) != NULL) {
+		MPASS((node->sf_vpstate & VBOXFS_VNODE_DOOMED) == 0);
+		VI_LOCK(vp);
+		if ((node->sf_type == VDIR && node->sf_parent == NULL) ||
+		    ((vp->v_iflag & VI_DOOMED) != 0 &&
+		    (lkflag & LK_NOWAIT) != 0)) {
+			VI_UNLOCK(vp);
+			VBOXFS_NODE_UNLOCK(node);
+			error = ENOENT;
+			vp = NULL;
+			goto out;
+		}
+		if ((vp->v_iflag & VI_DOOMED) != 0) {
+			VI_UNLOCK(vp);
+			node->sf_vpstate |= VBOXFS_VNODE_WRECLAIM;
+			while ((node->sf_vpstate & VBOXFS_VNODE_WRECLAIM) != 0) {
+				msleep(&node->sf_vnode, VBOXFS_NODE_MTX(node),
+				    0, "vsfE", 0);
+			}
+			goto loop1;
+		}
+		VBOXFS_NODE_UNLOCK(node);
+		error = vget(vp, lkflag | LK_INTERLOCK, curthread);
+		if (error == ENOENT)
+			goto loop;
+		if (error != 0) {
+			vp = NULL;
+			goto out;
+		}
+
+		/*
+		 * Make sure the vnode is still there after
+		 * getting the interlock to avoid racing a free.
+		 */
+		if (node->sf_vnode == NULL || node->sf_vnode != vp) {
+			vput(vp);
+			goto loop;
+		}
+
+		goto out;
 	}
 
+	if ((node->sf_vpstate & VBOXFS_VNODE_DOOMED) ||
+	    (node->sf_type == VDIR && node->sf_parent == NULL)) {
+		VBOXFS_NODE_UNLOCK(node);
+		error = ENOENT;
+		vp = NULL;
+		goto out;
+	}
+
+	/*
+	 * otherwise lock the vp list while we call getnewvnode
+	 * since that can block.
+	 */
+	if (node->sf_vpstate & VBOXFS_VNODE_ALLOCATING) {
+		node->sf_vpstate |= VBOXFS_VNODE_WANT;
+		error = msleep((caddr_t) &node->sf_vpstate,
+		    VBOXFS_NODE_MTX(node), PDROP | PCATCH,
+		    "vboxfs_alloc_vp", 0);
+		if (error)
+			return error;
+
+		goto loop;
+	} else
+		node->sf_vpstate |= VBOXFS_VNODE_ALLOCATING;
+	
+	VBOXFS_NODE_UNLOCK(node);
+
+	/* Get a new vnode and associate it with our node. */
+	error = getnewvnode("vboxfs", mp, &vboxfs_vnodeops, &vp);
+	if (error != 0)
+		goto unlock;
+	MPASS(vp != NULL);
+
+	/* lkflag is ignored, the lock is exclusive */
+	(void) vn_lock(vp, lkflag | LK_RETRY);
+
+	vp->v_data = node;
+	vp->v_type = node->sf_type;
+
+	/* Type-specific initialization. */
+	switch (node->sf_type) {
+	case VBLK:
+		/* FALLTHROUGH */
+	case VCHR:
+		/* FALLTHROUGH */
+	case VLNK:
+		/* FALLTHROUGH */
+	case VSOCK:
+		/* FALLTHROUGH */
+	case VFIFO:
+		break;
+	case VREG:
+#if 0 
+		vm_object_t object;
+		object = node->sf_reg.sf_aobj;
+		VM_OBJECT_WLOCK(object);
+		VI_LOCK(vp);
+		KASSERT(vp->v_object == NULL, ("Not NULL v_object in vsf"));
+		vp->v_object = object;
+		object->un_pager.swp.swp_vsf = vp;
+		vm_object_set_flag(object, OBJ_VBOXFS);
+		VI_UNLOCK(vp);
+		VM_OBJECT_WUNLOCK(object);
+#endif
+		break;
+	case VDIR:
+		MPASS(node->sf_parent != NULL);
+		if (node->sf_parent == node)
+			vp->v_vflag |= VV_ROOT;
+		break;
+
+	default:
+		panic("vboxfs_alloc_vp: type %p %d", node, (int)node->sf_type);
+	}
+	if (vp->v_type != VFIFO)
+		VN_LOCK_ASHARE(vp);
+
+	error = insmntque1(vp, mp, vboxfs_insmntque_dtr, NULL);
+	if (error)
+		vp = NULL;
+
+unlock:
+	VBOXFS_NODE_LOCK(node);
+
+	MPASS(node->sf_vpstate & VBOXFS_VNODE_ALLOCATING);
+	node->sf_vpstate &= ~VBOXFS_VNODE_ALLOCATING;
+	node->sf_vnode = vp;
+
+	if (node->sf_vpstate & VBOXFS_VNODE_WANT) {
+		node->sf_vpstate &= ~VBOXFS_VNODE_WANT;
+		VBOXFS_NODE_UNLOCK(node);
+		wakeup((caddr_t) &node->sf_vpstate);
+	} else
+		VBOXFS_NODE_UNLOCK(node);
+
+out:
 	*vpp = vp;
-	return (0);
+
+#ifdef INVARIANTS
+	if (error == 0) {
+		MPASS(*vpp != NULL && VOP_ISLOCKED(*vpp));
+		VBOXFS_NODE_LOCK(node);
+		MPASS(*vpp == node->sf_vnode);
+		VBOXFS_NODE_UNLOCK(node);
+	}
+#endif
+
+	return error;
+}
+
+/*
+ * Destroys the association between the vnode vp and the node it
+ * references.
+ */
+void
+vboxfs_free_vp(struct vnode *vp)
+{
+	struct vboxfs_node *node;
+
+	node = VP_TO_VBOXFS_NODE(vp);
+
+	VBOXFS_NODE_ASSERT_LOCKED(node);
+	node->sf_vnode = NULL;
+	if ((node->sf_vpstate & VBOXFS_VNODE_WRECLAIM) != 0)
+		wakeup(&node->sf_vnode);
+	node->sf_vpstate &= ~VBOXFS_VNODE_WRECLAIM;
+	vp->v_data = NULL;
+}
+
+static int
+vboxfs_vn_get_ino_alloc(struct mount *mp, void *arg, int lkflags,
+    struct vnode **rvp)
+{
+
+	return (vboxfs_alloc_vp(mp, arg, lkflags, rvp));
+}
+
+/*
+ * Construct a new pathname given an sfnode plus an optional tail component.
+ * This handles ".." and "."
+ */
+static char *
+sfnode_construct_path(struct vboxfs_node *node, char *tail)
+{
+	char *p;
+
+	if (strcmp(tail, ".") == 0 || strcmp(tail, "..") == 0)
+		panic("construct path for %s", tail);
+	p = malloc(strlen(node->sf_path) + 1 + strlen(tail) + 1, M_VBOXVFS, M_WAITOK);
+	strcpy(p, node->sf_path);
+	strcat(p, "/");
+	strcat(p, tail);
+	return (p);
 }
 
 static int
 vboxfs_access(struct vop_access_args *ap)
 {
-#if 0
-	sfnode_t *node = VN2SFN(vp->a_vp);
-	int error;
-
-	error = sfnode_access(node, mode, cr);
-
-	return (error);
-#endif 
 	struct vnode *vp = ap->a_vp;
 	accmode_t accmode = ap->a_accmode;
 
@@ -161,7 +401,7 @@ vboxfs_open(struct vop_open_args *ap)
 	sfp_file_t *fp;
 	int error;
 
-	np = VTOVBOXFS(ap->a_vp);
+	np = VP_TO_VBOXFS_NODE(ap->a_vp);
 	/*
 	 * XXX need to populate sf_path somehow.  This information is not
 	 *     provided to VOP_OPEN().  This must be why the Solaris
@@ -190,7 +430,7 @@ vboxfs_close(struct vop_close_args *ap)
 	struct vnode *vp = ap->a_vp;
 	struct vboxfs_node *np;
 
-	np = VTOVBOXFS(vp);
+	np = VP_TO_VBOXFS_NODE(vp);
 
 	/*
 	 * Free the directory entries for the node. We do this on this call
@@ -218,11 +458,12 @@ vboxfs_getattr(struct vop_getattr_args *ap)
 {
 	struct vnode 		*vp = ap->a_vp;
 	struct vattr 		*vap = ap->a_vap;
-	struct vboxfs_node	*np = VTOVBOXFS(vp);
+	struct vboxfs_node	*np = VP_TO_VBOXFS_NODE(vp);
 	struct vboxfs_mnt  	*mp = np->vboxfsmp;
 	mode_t			mode;
 	int			error = 0;
 
+	mode = 0;
 	vap->va_type = vp->v_type;
 	
 	vap->va_nlink = 1;		/* number of references to file */
@@ -237,17 +478,7 @@ vboxfs_getattr(struct vop_getattr_args *ap)
 	vap->va_fsid = vp->v_mount->mnt_stat.f_fsid.val[0];
 	if (vap->va_fileid == 0)
 		vap->va_fileid = 2;
-#if 0
-	if (!sfnode_stat_cached(node)) {
-		error = sfnode_update_stat_cache(node);
-		if (error != 0)
-		goto done;
-	}
 
-	vap->va_atime = node->sf_stat.sf_atime;
-	vap->va_mtime = node->sf_stat.sf_mtime;
-	vap->va_ctime = node->sf_stat.sf_ctime;
-#endif
 	vap->va_atime.tv_sec = VNOVAL;
 	vap->va_atime.tv_nsec = VNOVAL;
 	vap->va_mtime.tv_sec = VNOVAL;
@@ -255,17 +486,27 @@ vboxfs_getattr(struct vop_getattr_args *ap)
 	vap->va_ctime.tv_sec = VNOVAL;
 	vap->va_ctime.tv_nsec = VNOVAL;
 
+	if (!vsfnode_stat_cached(np)) {
+		error = vsfnode_update_stat_cache(np);
+		if (error != 0)
+			goto done;
+	}
+
+	vap->va_atime = np->sf_stat.sf_atime;
+	vap->va_mtime = np->sf_stat.sf_mtime;
+	vap->va_ctime = np->sf_stat.sf_ctime;
+
 	mode = np->sf_stat.sf_mode;
-#if 0
-	vap->va_mode = mode & MODEMASK;	/* files access mode and type */
+
+	vap->va_mode = mode;	/* TODO: mask files access mode and type */
 	if (S_ISDIR(mode)) {
 		vap->va_type = VDIR;	/* vnode type (for create) */
-		vap->va_mode = mp->sf_dmode != ~0 ? (mp->sf_dmode & 0777) : vap->va_mode;
+		vap->va_mode = mp->sf_dmode != 0 ? (mp->sf_dmode & 0777) : vap->va_mode;
 		vap->va_mode &= ~mp->sf_dmask;
 		vap->va_mode |= S_IFDIR;
 	} else if (S_ISREG(mode)) {
 		vap->va_type = VREG;
-		vap->va_mode = mp->sf_fmode != ~0 ? (mp->sf_fmode & 0777) : vap->va_mode;
+		vap->va_mode = mp->sf_fmode != 0 ? (mp->sf_fmode & 0777) : vap->va_mode;
 		vap->va_mode &= ~mp->sf_fmask;
 		vap->va_mode |= S_IFREG;
 	} else if (S_ISFIFO(mode))
@@ -276,26 +517,18 @@ vboxfs_getattr(struct vop_getattr_args *ap)
 		vap->va_type = VBLK;
 	else if (S_ISLNK(mode)) {
 		vap->va_type = VLNK;
-		vap->va_mode = mp->sf_fmode != ~0 ? (mp->sf_fmode & 0777) : vap->va_mode;
+		vap->va_mode = mp->sf_fmode != 0 ? (mp->sf_fmode & 0777) : vap->va_mode;
 		vap->va_mode &= ~mp->sf_fmask;
 		vap->va_mode |= S_IFLNK;
 	} else if (S_ISSOCK(mode))
 		vap->va_type = VSOCK;
-#endif
-	if (vp->v_type & VDIR) {
-		vap->va_nlink = 2;
-		vap->va_mode = 0555;
-	} else {
-		vap->va_nlink = 1;
-		vap->va_mode = 0444;
-	}
 
 	vap->va_size = np->sf_stat.sf_size;
 	vap->va_blocksize = 512;
 	/* bytes of disk space held by file */
    	vap->va_bytes = (np->sf_stat.sf_alloc + 511) / 512;
 
-//done:
+done:
 	return (error);
 }
 
@@ -305,7 +538,7 @@ vboxfs_setattr(struct vop_setattr_args *ap)
 	
 	struct vnode 		*vp = ap->a_vp;
 	struct vattr 		*vap = ap->a_vap;
-	struct vboxfs_node	*np = VTOVBOXFS(vp);
+	struct vboxfs_node	*np = VP_TO_VBOXFS_NODE(vp);
 	int			error;
 	mode_t			mode;
 
@@ -363,7 +596,7 @@ vboxfs_read(struct vop_read_args *ap)
 {
 	struct vnode		*vp = ap->a_vp;
 	struct uio 		*uio = ap->a_uio;
-	struct vboxfs_node	*np = VTOVBOXFS(vp);
+	struct vboxfs_node	*np = VP_TO_VBOXFS_NODE(vp);
 	int			error = 0;
 	uint32_t		bytes;
 	uint32_t		done;
@@ -465,7 +698,7 @@ vboxfs_readdir(struct vop_readdir_args *ap)
 	int *eofp = ap->a_eofflag;
 	struct vnode *vp = ap->a_vp;
 	struct uio *uio = ap->a_uio;
-	struct vboxfs_node *dir = VTOVBOXFS(vp);
+	struct vboxfs_node *dir = VP_TO_VBOXFS_NODE(vp);
 	struct vboxfs_node *node;
 	struct sffs_dirent *dirent = NULL;
 	sffs_dirents_t *cur_buf;
@@ -473,15 +706,9 @@ vboxfs_readdir(struct vop_readdir_args *ap)
 	off_t orig_off = uio->uio_offset;
 	int error = 0;
 	int dummy_eof;
-#if 0
+
 	if (vp->v_type != VDIR)
 		return (ENOTDIR);
-
-	if (uio->uio_loffset >= MAXOFFSET_T) {
-		*eofp = 1;
-		return (0);
-	}
-#endif
 
 	if (eofp == NULL)
 		eofp = &dummy_eof;
@@ -560,8 +787,8 @@ vboxfs_readdir(struct vop_readdir_args *ap)
 				node = dir;
 		} else {
 #if 0
-			node = sfnode_lookup(dir, dirent->sf_entry.d_name, VNON,
-			    0, &dirent->sf_stat, sfnode_cur_time_usec(), NULL);
+			node = vsfnode_lookup(dir, dirent->sf_entry.d_name, VNON,
+			    0, &dirent->sf_stat, vsfnode_cur_time_usec(), NULL);
 			if (node == NULL)
 				panic("sffs_readdir() lookup failed");
 #endif
@@ -600,7 +827,7 @@ vboxfs_print(struct vop_print_args *ap)
 	struct vnode *vp = ap->a_vp;
 	struct vboxfs_node *np;
 
-	np = VTOVBOXFS(vp);
+	np = VP_TO_VBOXFS_NODE(vp);
 
 	if (np == NULL) {
 		printf("No vboxfs_node data\n");
@@ -616,7 +843,6 @@ vboxfs_print(struct vop_print_args *ap)
 static int
 vboxfs_pathconf(struct vop_pathconf_args *ap)
 {
-	//struct vnode 		*vp = ap->a_vp;
 	register_t *retval = ap->a_retval;
 	int error = 0;
 
@@ -662,7 +888,7 @@ vboxfs_advlock(struct vop_advlock_args *ap)
  * Lookup an entry in a directory and create a new vnode if found.
  */	
 static int 
-vboxfs_lookup(struct vop_lookup_args /* {
+vboxfs_lookup(struct vop_cachedlookup_args /* {
 		struct vnodeop_desc *a_desc;
 		struct vnode *a_dvp;
 		struct vnode **a_vpp;
@@ -674,63 +900,60 @@ vboxfs_lookup(struct vop_lookup_args /* {
 	char	*nameptr = cnp->cn_nameptr;	/* the name of the file or directory */
 	struct	vnode **vpp = ap->a_vpp;	/* the vnode we found or NULL */
 	struct  vnode *tdp = NULL;
-	struct 	vboxfs_node *node = VTOVBOXFS(dvp);
+	struct 	vboxfs_node *node = VP_TO_VBOXFS_NODE(dvp);
 	struct 	vboxfs_mnt *vboxfsmp = node->vboxfsmp;
 	u_long  nameiop = cnp->cn_nameiop;
 	u_long 	flags = cnp->cn_flags;
+	sffs_stat_t	*stat, tmp_stat;
 	//long 	namelen;
 	ino_t 	id = 0;
-	int 	ltype, error = 0;
+	int 	ltype, type, error = 0;
 	int 	lkflags = cnp->cn_lkflags;	
+	char	*fullpath = NULL;
 
-	/* dvp must be a directory */
-	if (dvp->v_type != VDIR)
-		return (ENOTDIR);
-	
-	if (strcmp(nameptr, THEFILE_NAME) == 0)
-		id = THEFILE_INO;
-	else if (flags & ISDOTDOT)
-		id = ROOTDIR_INO;
-
-	/* Did we have a match? */
-	if (id) {
-		if (flags & ISDOTDOT) {
-			error = vn_vget_ino(dvp, id, lkflags, &tdp);
-		} else if (node->sf_ino == id) {
-			VREF(dvp);	/* we want ourself, ie "." */
-			/*
-			 * When we lookup "." we still can be asked to lock it
-			 * differently.
-			 */
-			ltype = lkflags & LK_TYPE_MASK;
-			if (ltype != VOP_ISLOCKED(dvp)) {
-				if (ltype == LK_EXCLUSIVE)
-					vn_lock(dvp, LK_UPGRADE | LK_RETRY);
-				else /* if (ltype == LK_SHARED) */
-					vn_lock(dvp, LK_DOWNGRADE | LK_RETRY);
-			}
-			tdp = dvp;
-		} else
-			error = vboxfs_vget(vboxfsmp->sf_vfsp, id, lkflags, &tdp);
-		if (!error) {
-			*vpp = tdp;
-			/* Put this entry in the cache */
-			if (flags & MAKEENTRY)
-				cache_enter(dvp, *vpp, cnp);
-		}
+	error = ENOENT;
+	if (cnp->cn_flags & ISDOTDOT) {
+		error = vn_vget_ino_gen(dvp, vboxfs_vn_get_ino_alloc,
+		    node->sf_parent, cnp->cn_lkflags, vpp);
+		error = ENOENT;
+		if (error != 0)
+			goto out;
+		
+	} else if (cnp->cn_namelen == 1 && cnp->cn_nameptr[0] == '.') {
+		VREF(dvp);
+		*vpp = dvp;
+		error = 0;
 	} else {
-		/* Enter name into cache as non-existant */
-		if (flags & MAKEENTRY)
-			cache_enter(dvp, *vpp, cnp);
+		mode_t m;
+		type = VNON;
+		stat = &tmp_stat;
+		fullpath = sfnode_construct_path(node, cnp->cn_nameptr);
+		error = sfprov_get_attr(node->vboxfsmp->sf_handle,
+		    fullpath, stat);
+		// stat_time = vsfnode_cur_time_usec();
 
-		if ((flags & ISLASTCN) &&
-		    (nameiop == CREATE || nameiop == RENAME)) {
-			error = EROFS;
-		} else {
+		m = stat->sf_mode;
+		if (error != 0)
 			error = ENOENT;
+		else if (S_ISDIR(m))
+			type = VDIR;
+		else if (S_ISREG(m))
+			type = VREG;
+		else if (S_ISLNK(m))
+			type = VLNK;
+		if (error == 0) {
+			struct vboxfs_node *unode;
+			error = vboxfs_alloc_node(vboxfsmp->sf_vfsp, vboxfsmp, fullpath, type, 0,
+	    			0, 0755, node, &unode);
+			error = vboxfs_alloc_vp(vboxfsmp->sf_vfsp, unode, cnp->cn_lkflags, vpp);
 		}
 	}
 
+	if ((cnp->cn_flags & MAKEENTRY) != 0)
+		cache_enter(dvp, *vpp, cnp);
+out:
+	if (fullpath)
+		free(fullpath, M_VBOXVFS);
 	return (error);
 }
 
@@ -744,47 +967,53 @@ static int
 vboxfs_reclaim(struct vop_reclaim_args *ap)
 {
 	struct vnode *vp;
-	struct vboxfs_node *np;
+	struct vboxfs_node *node;
+	struct 	vboxfs_mnt *vboxfsmp;
 
 	vp = ap->a_vp;
-	np = VTOVBOXFS(vp);
+	node = VP_TO_VBOXFS_NODE(vp);
+	vboxfsmp = node->vboxfsmp;
 
-	/*
-	 * Destroy the vm object and flush associated pages.
-	 */
 	vnode_destroy_vobject(vp);
+	vp->v_object = NULL;
+	cache_purge(vp);
 
-	if (np != NULL) {
-		vfs_hash_remove(vp);
-		free(np, M_VBOXVFS);
-		vp->v_data = NULL;
-	}
+	VBOXFS_NODE_LOCK(node);
+	VBOXFS_ASSERT_ELOCKED(node);
+	vboxfs_free_vp(vp);
+
+	/* If the node referenced by this vnode was deleted by the user,
+	 * we must free its associated data structures (now that the vnode
+	 * is being reclaimed). */
+	if ((node->sf_vpstate & VBOXFS_VNODE_ALLOCATING) == 0) {
+		node->sf_vpstate = VBOXFS_VNODE_DOOMED;
+		VBOXFS_NODE_UNLOCK(node);
+		vboxfs_free_node(vboxfsmp, node);
+	} else
+		VBOXFS_NODE_UNLOCK(node);
+
+	MPASS(vp->v_data == NULL);
+
 	return (0);
 }
 
 static int
 vboxfs_vptofh(struct vop_vptofh_args *ap)
 {
-#if 0
-	struct vboxfs_node *node;
-	struct ifid *ifhp;
 
-	node = VTON(ap->a_vp);
-	ifhp = (struct ifid *)ap->a_fhp;
-	ifhp->ifid_len = sizeof(struct ifid);
-	ifhp->ifid_ino = node->hash_id;
-#endif
 	return (EOPNOTSUPP);
 }
 
 static int
 vboxfs_getpages(struct vop_getpages_args *ap)
 {
+
 	return (EOPNOTSUPP);
 }
 
 static int
 vboxfs_putpages(struct vop_putpages_args *ap)
 {
+
 	return (EOPNOTSUPP);
 }

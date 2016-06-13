@@ -49,9 +49,6 @@ SYSCTL_NODE(_vfs, OID_AUTO, vboxfs, CTLFLAG_RW, 0, "VirtualBox shared filesystem
 SYSCTL_INT(_vfs_vboxfs, OID_AUTO, version, CTLFLAG_RD, &vboxfs_version, 0, "");
 SYSCTL_UINT(_vfs_vboxfs, OID_AUTO, debug, CTLFLAG_RW, &vboxvfs_debug, 0, "Debug level");
 
-/* global connection to the host service. */
-//static VBSFCLIENT g_vboxSFClient;
-
 static vfs_init_t	vboxfs_init;
 static vfs_uninit_t	vboxfs_uninit;
 static vfs_cmount_t	vboxfs_cmount;
@@ -70,13 +67,104 @@ static struct vfsops vboxfs_vfsops = {
 	.vfs_statfs	= vboxfs_statfs,
 	.vfs_sync	= vfs_stdsync,
 	.vfs_uninit	= vboxfs_uninit,
-	.vfs_unmount	= vboxfs_unmount,
-	.vfs_vget	= vboxfs_vget,
+	.vfs_unmount	= vboxfs_unmount
 };
 
 
 VFS_SET(vboxfs_vfsops, vboxvfs, VFCF_NETWORK);
 MODULE_DEPEND(vboxvfs, vboxguest, 1, 1, 1);
+
+/*
+ * Allocates a new node of type 'type' inside the 'tmp' mount point, with
+ * its owner set to 'uid', its group to 'gid' and its mode set to 'mode',
+ * using the credentials of the process 'p'.
+ *
+ * If the node type is set to 'VDIR', then the parent parameter must point
+ * to the parent directory of the node being created.  It may only be NULL
+ * while allocating the root node.
+ *
+ * If the node type is set to 'VBLK' or 'VCHR', then the rdev parameter
+ * specifies the device the node represents.
+ *
+ * If the node type is set to 'VLNK', then the parameter target specifies
+ * the file name of the target file for the symbolic link that is being
+ * created.
+ *
+ * Note that new nodes are retrieved from the available list if it has
+ * items or, if it is empty, from the node pool as long as there is enough
+ * space to create them.
+ *
+ * Returns zero on success or an appropriate error code on failure.
+ */
+int
+vboxfs_alloc_node(struct mount *mp, struct vboxfs_mnt *vsfmp, const char *fullpath,
+    enum vtype type, uid_t uid, gid_t gid, mode_t mode, struct vboxfs_node *parent,
+    struct vboxfs_node **node)
+{
+	struct vboxfs_node *nnode;
+
+	if ((mp->mnt_kern_flag & MNTK_UNMOUNT) != 0) {
+		/*
+		 * When a new tmpfs node is created for fully
+		 * constructed mount point, there must be a parent
+		 * node, which vnode is locked exclusively.  As
+		 * consequence, if the unmount is executing in
+		 * parallel, vflush() cannot reclaim the parent vnode.
+		 * Due to this, the check for MNTK_UNMOUNT flag is not
+		 * racy: if we did not see MNTK_UNMOUNT flag, then tmp
+		 * cannot be destroyed until node construction is
+		 * finished and the parent vnode unlocked.
+		 *
+		 * Tmpfs does not need to instantiate new nodes during
+		 * unmount.
+		 */
+		return (EBUSY);
+	}
+
+	nnode = (struct vboxfs_node *)uma_zalloc_arg(
+				vsfmp->sf_node_pool, vsfmp, M_WAITOK);
+
+	/* Generic initialization. */
+	nnode->sf_type = type;
+	nnode->sf_ino = vsfmp->sf_ino++;
+	nnode->sf_path = strdup(fullpath, M_VBOXVFS);
+	nnode->sf_parent = parent;
+	nnode->vboxfsmp = vsfmp;
+
+	/* Type-specific initialization. */
+	switch (nnode->sf_type) {
+	case VBLK:
+	case VCHR:
+	case VDIR:
+	case VFIFO:
+	case VSOCK:
+	case VLNK:
+	case VREG:
+		break;
+
+	default:
+		panic("vboxfs_alloc_node: type %p %d", nnode, (int)nnode->sf_type);
+	}
+
+	*node = nnode;
+	return 0;
+}
+
+void
+vboxfs_free_node(struct vboxfs_mnt *vboxfs, struct vboxfs_node *node)
+{
+
+#ifdef INVARIANTS
+	TMPFS_NODE_LOCK(node);
+	MPASS(node->sf_vnode == NULL);
+	MPASS((node->sf_vpstate & TMPFS_VNODE_ALLOCATING) == 0);
+	TMPFS_NODE_UNLOCK(node);
+#endif
+	if (node->sf_path)
+		free(node->sf_path, M_VBOXVFS);
+
+	uma_zfree(vboxfs->sf_node_pool, node);
+}
 
 static int
 vboxfs_cmount(struct mntarg *ma, void *data, uint64_t flags)
@@ -95,6 +183,7 @@ vboxfs_cmount(struct mntarg *ma, void *data, uint64_t flags)
 	ma = mount_argf(ma, "file_mode", "%d", args.fmode);
 	ma = mount_argf(ma, "dir_mode", "%d", args.dmode);
 	ma = mount_arg(ma, "from", args.name, -1);
+
 	return (kernel_mount(ma, flags));
 }
 
@@ -130,6 +219,43 @@ static const char *vboxfs_opts[] = {
 } while (0)
 
 static int
+vboxfs_node_ctor(void *mem, int size, void *arg, int flags)
+{
+	struct vboxfs_node *node = (struct vboxfs_node *)mem;
+
+	node->sf_vnode = NULL;
+	node->sf_vpstate = 0;
+
+	return (0);
+}
+
+static void
+vboxfs_node_dtor(void *mem, int size, void *arg)
+{
+	struct vboxfs_node *node = (struct vboxfs_node *)mem;
+	node->sf_type = VNON;
+}
+
+static int
+vboxfs_node_init(void *mem, int size, int flags)
+{
+	struct vboxfs_node *node = (struct vboxfs_node *)mem;
+	node->sf_ino = 0;
+
+	mtx_init(&node->sf_interlock, "tmpfs node interlock", NULL, MTX_DEF);
+
+	return (0);
+}
+
+static void
+vboxfs_node_fini(void *mem, int size)
+{
+	struct vboxfs_node *node = (struct vboxfs_node *)mem;
+
+	mtx_destroy(&node->sf_interlock);
+}
+
+static int
 vboxfs_mount(struct mount *mp)
 {
 	struct vboxfs_mnt *vboxfsmp = NULL; 
@@ -142,6 +268,7 @@ vboxfs_mount(struct mount *mp)
    	mode_t file_mode = 0, dir_mode = 0;
 	uid_t uid = 0;
 	gid_t gid = 0;
+	struct vboxfs_node *root;
 
 	if (mp->mnt_flag & (MNT_UPDATE | MNT_ROOTFS))
 		return (EOPNOTSUPP);
@@ -169,6 +296,7 @@ vboxfs_mount(struct mount *mp)
 	vboxfsmp->sf_fmode = file_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
 	vboxfsmp->sf_dmode = dir_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
 	vboxfsmp->sf_ino = 3;
+	vboxfsmp->sf_stat_ttl = 200;
 
 	/* Invoke Hypervisor mount interface before proceeding */
 	error = sfprov_mount(share_name, &handle);
@@ -186,6 +314,25 @@ vboxfs_mount(struct mount *mp)
 
 	vboxfsmp->sf_handle = handle;
 	vboxfsmp->sf_vfsp = mp;
+
+	vboxfsmp->sf_node_pool = uma_zcreate("VBOXFS node",
+	    sizeof(struct vboxfs_node),
+	    vboxfs_node_ctor, vboxfs_node_dtor,
+	    vboxfs_node_init, vboxfs_node_fini,
+	    UMA_ALIGN_PTR, 0);
+
+	/* Allocate the root node. */
+	error = vboxfs_alloc_node(mp, vboxfsmp, "", VDIR, 0,
+	    0, 0755, NULL, &root);
+
+	if (error != 0 || root == NULL) {
+		uma_zdestroy(vboxfsmp->sf_node_pool);
+		free(vboxfsmp, M_VBOXVFS);
+		return error;
+	}
+
+	root->sf_parent = root;
+	vboxfsmp->sf_root = root;
 
 	MNT_ILOCK(mp);
 	mp->mnt_data = vboxfsmp;
@@ -221,7 +368,6 @@ vboxfs_unmount(struct mount *mp, int mntflags)
 	int error;
 	int flags;
 
-	printf("vboxfs_unmount: flags=%04x\n", mntflags);		
 	vboxfsmp = VFSTOVBOXFS(mp);
 	td = curthread;
 	flags = 0;
@@ -238,13 +384,13 @@ vboxfs_unmount(struct mount *mp, int mntflags)
 		/* TBD anything here? */
 	}
 
+	uma_zdestroy(vboxfsmp->sf_node_pool);
+
 	free(vboxfsmp, M_VBOXVFS);
 	MNT_ILOCK(mp);
 	mp->mnt_data = NULL;
 	mp->mnt_flag &= ~MNT_LOCAL;
 	MNT_IUNLOCK(mp);
-
-	printf("vboxfs_unmount() done\n");
 
 	return (0);
 }
@@ -252,88 +398,13 @@ vboxfs_unmount(struct mount *mp, int mntflags)
 static int
 vboxfs_root(struct mount *mp, int flags, struct vnode **vpp)
 {
-	int error;
-	struct vboxfs_node *unode;
+        int error;
+        error = vboxfs_alloc_vp(mp, VFSTOVBOXFS(mp)->sf_root, flags, vpp);
 
-	error = (vboxfs_vget(mp, (ino_t)ROOTDIR_INO, flags, vpp));
-	if (!error) {
-		unode = (*vpp)->v_data;
-		unode->sf_path = strdup("/", M_VBOXVFS);
-	}
-	return (error);
-}
+        if (!error)
+                (*vpp)->v_vflag |= VV_ROOT;
 
-int
-vboxfs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
-{
-	struct vboxfs_mnt *vboxfsmp;
-	struct thread *td;
-	struct vnode *vp;
-	struct vboxfs_node *unode;
-	int error;
-
-	error = vfs_hash_get(mp, ino, flags, curthread, vpp, NULL, NULL);
-	if (error || *vpp != NULL)
-		return (error);
-
-	/*
-	 * We must promote to an exclusive lock for vnode creation.  This
-	 * can happen if lookup is passed LOCKSHARED.
- 	 */
-	if ((flags & LK_TYPE_MASK) == LK_SHARED) {
-		flags &= ~LK_TYPE_MASK;
-		flags |= LK_EXCLUSIVE;
-	}
-
-	/*
-	 * We do not lock vnode creation as it is believed to be too
-	 * expensive for such rare case as simultaneous creation of vnode
-	 * for same ino by different processes. We just allow them to race
-	 * and check later to decide who wins. Let the race begin!
-	 */
-	td = curthread;
-	if ((error = vboxfs_allocv(mp, &vp, td))) {
-		printf("Error from vboxfs_allocv\n");
-		return (error);
-	}
-
-	vboxfsmp = VFSTOVBOXFS(mp);
-	unode = malloc(sizeof(struct vboxfs_node), M_VBOXVFS, M_WAITOK | M_ZERO);
-	unode->sf_vnode = vp;
-	unode->sf_ino = ino;
-	unode->vboxfsmp = vboxfsmp;
-	vp->v_data = unode;
-
-	lockmgr(vp->v_vnlock, LK_EXCLUSIVE, NULL);
-	error = insmntque(vp, mp);
-	if (error != 0)
-		return (error);
-
-	error = vfs_hash_insert(vp, ino, flags, td, vpp, NULL, NULL);
-	if (error || *vpp != NULL)
-		return (error);
-
-	switch (ino) {
-	case ROOTDIR_INO:
-		vp->v_type = VDIR;
-		break;
-	case THEFILE_INO:
-		vp->v_type = VREG;
-		break;
-	default:
-		vp->v_type = VBAD;
-		break;
-	}
-
-	if (vp->v_type != VFIFO)
-		VN_LOCK_ASHARE(vp);
-
-	if (ino == ROOTDIR_INO)
-		vp->v_vflag |= VV_ROOT;
-
-	*vpp = vp;
-
-	return (0);
+        return error;
 }
 
 /*

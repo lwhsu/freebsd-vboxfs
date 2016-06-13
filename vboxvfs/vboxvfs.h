@@ -21,12 +21,42 @@
 //#define MODEMASK	07777	/* mode bits plus permission bits */
 /** Helper macros */
 #define VFSTOVBOXFS(mp)		((struct vboxfs_mnt *)((mp)->mnt_data))
-#define VTOVBOXFS(vp) 		((struct vboxfs_node *)(vp)->v_data)
+#define VP_TO_VBOXFS_NODE(vp) 	((struct vboxfs_node *)(vp)->v_data)
 #define VBOXTOV(np)		((struct vnode *)(np)->n_vnode)
 
 #define	ROOTDIR_INO		1
 #define	THEFILE_INO		2
 #define THEFILE_NAME	"thefile"
+
+#define VBOXFS_NODE_LOCK(node) mtx_lock(&(node)->sf_interlock)
+#define VBOXFS_NODE_UNLOCK(node) mtx_unlock(&(node)->sf_interlock)
+#define VBOXFS_NODE_MTX(node) (&(node)->sf_interlock)
+#define	VBOXFS_NODE_ASSERT_LOCKED(node) mtx_assert(VBOXFS_NODE_MTX(node), \
+    MA_OWNED)
+
+#ifdef INVARIANTS
+#define VBOXFS_ASSERT_LOCKED(node) do {					\
+		MPASS(node != NULL);					\
+		MPASS(node->sf_vnode != NULL);				\
+		if (!VOP_ISLOCKED(node->sf_vnode) &&			\
+		    !mtx_owned(VBOXFS_NODE_MTX(node)))			\
+			panic("vboxfs: node is not locked: %p", node);	\
+	} while (0)
+#define VBOXFS_ASSERT_ELOCKED(node) do {					\
+		MPASS((node) != NULL);					\
+		MPASS((node)->sf_vnode != NULL);			\
+		mtx_assert(VBOXFS_NODE_MTX(node), MA_OWNED);		\
+		ASSERT_VOP_LOCKED((node)->sf_vnode, "vboxfs");		\
+	} while (0)
+#else
+#define VBOXFS_ASSERT_LOCKED(node) (void)0
+#define VBOXFS_ASSERT_ELOCKED(node) (void)0
+#endif
+
+#define	VBOXFS_VNODE_ALLOCATING	1
+#define	VBOXFS_VNODE_WANT	2
+#define	VBOXFS_VNODE_DOOMED	4
+#define	VBOXFS_VNODE_WRECLAIM	8
 
 MALLOC_DECLARE(M_VBOXVFS);
 
@@ -213,10 +243,12 @@ struct vboxfs_mnt {
 	int		sf_stat_ttl;	/* ttl for stat caches (in ms) */
 	int		sf_fsync;	/* whether to honor fsync or not */
 	uint64_t	sf_ino;		/* per FS ino generator */
+	uma_zone_t	sf_node_pool;
+	struct vboxfs_node	*sf_root;
 };
 
 /*
- * vboxfs_node is the file system dependent vnode data for vboxsf.
+ * vboxfs_node is the file system dependent vnode data for vboxfs.
  * vboxfs_node's also track all files ever accessed, both open and closed.
  * It duplicates some of the information in vnode, since it holds
  * information for files that may have been completely closed.
@@ -231,10 +263,14 @@ struct vboxfs_node {
 	struct vboxfs_node	*sf_parent;	/* parent sfnode of this one */
 	uint16_t		sf_children;	/* number of children sfnodes */
 	uint8_t			sf_type;	/* VDIR or VREG */
+	uint8_t			sf_vpstate;	/* XXX: ADD COMMENT */
 	uint8_t			sf_is_stale;	/* this is stale and should be purged */
 	sffs_stat_t		sf_stat;	/* cached file attrs for this node */
 	uint64_t		sf_stat_time;	/* last-modified time of sf_stat */
 	sffs_dirents_t		*sf_dir_list;	/* list of entries for this directory */
+
+	/* interlock to protect sf_vpstate */
+	struct mtx		sf_interlock;
 };
 
 struct vboxfs_mount_info {
@@ -294,8 +330,14 @@ struct sf_reg_info {
 	SHFLHANDLE handle;
 };
 
-int vboxfs_allocv(struct mount *, struct vnode **, struct thread *);
-int vboxfs_vget(struct mount *, ino_t, int, struct vnode **);
+int vboxfs_alloc_vp(struct mount *, struct vboxfs_node *, int,
+    struct vnode **);
+void vboxfs_free_vp(struct vnode *);
+
+int vboxfs_alloc_node(struct mount *, struct vboxfs_mnt *, const char*,
+    enum vtype, uid_t, gid_t, mode_t, struct vboxfs_node *,
+    struct vboxfs_node **);
+void vboxfs_free_node(struct vboxfs_mnt *, struct vboxfs_node *);
 
 /*
  * These are the provider interfaces used by sffs to access the underlying
