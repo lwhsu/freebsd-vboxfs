@@ -35,7 +35,7 @@ cp -R $(freebsd-vboxsf)/vboxvfs `make -V WRKSRC`/src/VBox/Additions/freebsd
 make
 ```
 
-To test: (currently does not work)
+To test: (currently does not fully work)
 ```sh
 cd /usr/ports/emulators/virtualbox-ose-additions
 cd `make -V WRKSRC`
