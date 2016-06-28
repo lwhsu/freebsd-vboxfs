@@ -126,42 +126,6 @@ sfprov_mount(char *path, sfp_mount_t **mnt)
 	m = malloc(sizeof (*m),  M_VBOXVFS, M_WAITOK | M_ZERO);
 	str = sfprov_string(path, &size);
 
-	/*
-	 * malloc() memory on FreeBSD is always wired.
-	 * Here, the call chain looks like this:
-	 *
-	 * vboxCallMapFolder
-	 *   VbglHGCMCall
-	 *     vbglDriverIOCtl
-	 *       VBoxGuestIDCCall
-	 *         g_VBoxGuest->_VBoxGuestIDCCall (VBoxGuestIDCCall)
-	 *           VBoxGuestCommonIOCtl
-	 *             VBoxGuestCommonIOCtl_HGCMCall
-	 *               VbglR0HGCMInternalCall
-	 *                 vbglR0HGCMInternalPreprocessCall
-	 *                   RTR0MemObjLockKernel
-	 *                     RTR0MemObjLockKernelTag
-	 *                       rtR0MemObjNativeLockKernelTag
-	 *                         rtR0MemObjNativeLockKernel
-	 *                           rtR0MemObjNativeLockInMap
-	 *
-	 * In VbglR0HGCMInternalCall, VMMDevHGCMParmType_LinAddr_Locked_In
-	 * tells VBox that the memory is already wired.  However,
-	 * vboxCallMapFolder() uses VMMDevHGCMParmType_LinAddr instead.
-	 *
-	 * Q: Are there other things already supported on FreeBSD that go
-	 *    through VbglHGCMCall?  Do they use this parameter type?
-	 * A: No, all callers of VbglHGCMCall() are for shared folders!
-	 *    And none of the call stack can be reached on FreeBSD except
-	 *    through the shared folders implementation.
-	 * Q: But Solaris does the malloc approach too!
-	 * A: Yes, but in rtR0MemObjSolLock(), it does nothing if the
-	 *    address is in kernel memory, because they are "always locked",
-	 *    so in that function it "only handles user-space memory".
-	 *    So all we need to do is always pass in malloc'd memory, and
-	 *    fix rtR0MemObjNativeLockKernel() to do the same thing.  As
-	 *    well as other places that need similar logic.
-	 */
 	int error;
 	rc = vboxCallMapFolder(&vbox_client, str, &m->map);
 	if (RT_FAILURE(rc)) {
