@@ -1,11 +1,11 @@
---- src/VBox/Additions/freebsd/Makefile.kmk.orig	2014-01-18 18:16:00.000000000 +0000
-+++ src/VBox/Additions/freebsd/Makefile.kmk	2014-01-18 18:16:06.000000000 +0000
+--- src/VBox/Additions/freebsd/Makefile.kmk.orig	2016-07-25 14:59:45.955897000 +0800
++++ src/VBox/Additions/freebsd/Makefile.kmk	2016-07-25 15:00:23.689631000 +0800
 @@ -23,7 +23,7 @@
  endif
  
  # Include sub-makefiles.
 -#include $(PATH_SUB_CURRENT)/vboxvfs/Makefile.kmk
 +include $(PATH_SUB_CURRENT)/vboxvfs/Makefile.kmk
- include $(PATH_SUB_CURRENT)/drm/Makefile.kmk
+ #include $(PATH_SUB_CURRENT)/drm/Makefile.kmk
  
  #

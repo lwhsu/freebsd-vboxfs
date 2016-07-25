@@ -1,5 +1,5 @@
---- src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c.orig	2016-04-20 10:02:37.000000000 +0000
-+++ src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c	2016-06-06 19:51:14.915079000 +0000
+--- src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c.orig	2016-07-18 19:56:55.000000000 +0800
++++ src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c	2016-07-25 15:24:09.391093000 +0800
 @@ -121,16 +121,15 @@
  
          case RTR0MEMOBJTYPE_LOCK:
@@ -22,51 +22,16 @@
              break;
          }
  
-@@ -168,14 +167,19 @@
-             VM_OBJECT_LOCK(pMemFreeBSD->pObject);
- #endif
-             vm_page_t pPage = vm_page_find_least(pMemFreeBSD->pObject, 0);
-+#if __FreeBSD_version < 900000
-+            /* See http://lists.freebsd.org/pipermail/freebsd-current/2012-November/037963.html */
-             vm_page_lock_queues();
-+#endif
-             for (vm_page_t pPage = vm_page_find_least(pMemFreeBSD->pObject, 0);
-                  pPage != NULL;
-                  pPage = vm_page_next(pPage))
-             {
-                 vm_page_unwire(pPage, 0);
-             }
-+#if __FreeBSD_version < 900000
-             vm_page_unlock_queues();
-+#endif
- #if __FreeBSD_version >= 1000030
-             VM_OBJECT_WUNLOCK(pMemFreeBSD->pObject);
- #else
-@@ -201,12 +205,12 @@
-     vm_page_t pPages;
-     int cTries = 0;
- 
--#if __FreeBSD_version > 1000000
-+#if __FreeBSD_version >= 902508
-     int fFlags = VM_ALLOC_INTERRUPT | VM_ALLOC_NOBUSY;
-     if (fWire)
-         fFlags |= VM_ALLOC_WIRED;
- 
--    while (cTries <= 1)
-+    while (1)
-     {
- #if __FreeBSD_version >= 1000030
-         VM_OBJECT_WLOCK(pObject);
-@@ -220,18 +224,23 @@
+@@ -224,18 +223,23 @@
  #else
          VM_OBJECT_UNLOCK(pObject);
  #endif
 -        if (pPages)
 +        if (pPages || cTries >= 1)
-+            break;
+             break;
 +#if __FreeBSD_version >= 1100092
 +        if (!vm_page_reclaim_contig(fFlags, cPages, 0, VmPhysAddrHigh, uAlignment, 0))
-             break;
++             break;
 +#elif __FreeBSD_version >= 1000015
          vm_pageout_grow_cache(cTries, 0, VmPhysAddrHigh);
 +#else
@@ -86,7 +51,7 @@
              break;
          vm_contig_grow_cache(cTries, 0, VmPhysAddrHigh);
          cTries++;
-@@ -239,11 +248,8 @@
+@@ -243,11 +247,8 @@
  
      if (!pPages)
          return pPages;
@@ -99,7 +64,7 @@
      for (vm_pindex_t iPage = 0; iPage < cPages; iPage++)
      {
          vm_page_t pPage = pPages + iPage;
-@@ -255,13 +261,9 @@
+@@ -259,13 +260,8 @@
              atomic_add_int(&cnt.v_wire_count, 1);
          }
      }
@@ -107,29 +72,38 @@
 -    VM_OBJECT_WUNLOCK(pObject);
 -#else
      VM_OBJECT_UNLOCK(pObject);
- #endif
+-#endif
      return pPages;
 -#endif
  }
  
  static int rtR0MemObjFreeBSDPhysAllocHelper(vm_object_t pObject, u_long cPages,
-@@ -291,11 +293,15 @@
+@@ -287,21 +283,18 @@
+         if (!pPage)
+         {
+             /* Free all allocated pages */
+-#if __FreeBSD_version >= 1000030
+-            VM_OBJECT_WLOCK(pObject);
+-#else
+             VM_OBJECT_LOCK(pObject);
+-#endif
++
              while (iPage-- > 0)
              {
                  pPage = vm_page_lookup(pObject, iPage);
+-#if __FreeBSD_version < 1000000
 +#if __FreeBSD_version < 900000
                  vm_page_lock_queues();
-+#endif
+ #endif
                  if (fWire)
                      vm_page_unwire(pPage, 0);
                  vm_page_free(pPage);
+-#if __FreeBSD_version < 1000000
 +#if __FreeBSD_version < 900000
                  vm_page_unlock_queues();
-+#endif
+ #endif
              }
- #if __FreeBSD_version >= 1000030
-             VM_OBJECT_WUNLOCK(pObject);
-@@ -511,14 +517,19 @@
+@@ -519,14 +512,19 @@
      if (!pMemFreeBSD)
          return VERR_NO_MEMORY;
  
@@ -157,7 +131,7 @@
      if (rc == KERN_SUCCESS)
      {
          pMemFreeBSD->Core.u.Lock.R0Process = R0Process;
-@@ -743,7 +754,12 @@
+@@ -751,7 +749,12 @@
      {
          /** @todo: is this needed?. */
          PROC_LOCK(pProc);
@@ -171,7 +145,7 @@
          PROC_UNLOCK(pProc);
      }
      else
-@@ -842,11 +858,15 @@
+@@ -850,11 +853,15 @@
  
              vm_offset_t pb = (vm_offset_t)pMemFreeBSD->Core.pv + ptoa(iPage);
  
