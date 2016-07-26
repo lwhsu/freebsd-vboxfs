@@ -173,7 +173,7 @@ MALLOC_DECLARE(M_VBOXVFS);
  * representation of an active mount point
  */
 struct sfp_mount {
-	VBSFMAP map;
+	VBGLSFMAP map;
 };
 
 /*
@@ -190,7 +190,7 @@ typedef struct sfp_mount sfp_mount_t;
 
 struct sfp_file {
 	SHFLHANDLE handle;
-	VBSFMAP map;	/* need this again for the close operation */
+	VBGLSFMAP map;	/* need this again for the close operation */
 };
 
 typedef struct sfp_file sfp_file_t;
@@ -285,7 +285,7 @@ struct vboxfs_mount_info {
 };
 
 struct sf_glob_info {
-	VBSFMAP map;
+	VBGLSFMAP map;
 /*	struct nls_table *nls;*/
 	int ttl;
 	int uid;
@@ -296,7 +296,7 @@ struct sf_glob_info {
 /** Per-file system mount instance data. */
 typedef struct vboxfs_globinfo
 {
-	VBSFMAP			Map;
+	VBGLSFMAP			Map;
 	int			Ttl;
 	int			Uid;
 	int			Gid;

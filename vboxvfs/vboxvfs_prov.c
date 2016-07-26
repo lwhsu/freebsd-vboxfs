@@ -46,7 +46,7 @@
 #define DIRENT_NAMELEN(reclen)    \
 	((reclen) - (offsetof(struct dirent, d_name[0])))
 
-static VBSFCLIENT vbox_client;
+static VBGLSFCLIENT vbox_client;
 
 extern u_int vboxvfs_debug;
 
@@ -89,17 +89,17 @@ sfprov_connect(int version)
 		return (NULL);
 	}
 
-	if (RT_FAILURE(vboxInit()))
+	if (RT_FAILURE(VbglR0SfInit()))
 		return (NULL);
 
-	if (RT_FAILURE(vboxConnect(&vbox_client))) {
-		vboxUninit();
+	if (RT_FAILURE(VbglR0SfConnect(&vbox_client))) {
+		VbglR0SfTerm();
 		return (NULL);
 	}
 
-	if (RT_FAILURE(vboxCallSetUtf8(&vbox_client))) {
-		vboxDisconnect(&vbox_client);
-		vboxUninit();
+	if (RT_FAILURE(VbglR0SfSetUtf8(&vbox_client))) {
+		VbglR0SfDisconnect(&vbox_client);
+		VbglR0SfTerm();
 		return (NULL);
 	}
 	return ((sfp_connection_t *)&vbox_client);
@@ -108,8 +108,8 @@ sfprov_connect(int version)
 void
 sfprov_disconnect()
 {
-	vboxDisconnect(&vbox_client);
-	vboxUninit();
+	VbglR0SfDisconnect(&vbox_client);
+	VbglR0SfTerm();
 }
 
 int
@@ -127,7 +127,7 @@ sfprov_mount(char *path, sfp_mount_t **mnt)
 	str = sfprov_string(path, &size);
 
 	int error;
-	rc = vboxCallMapFolder(&vbox_client, str, &m->map);
+	rc = VbglR0SfMapFolder(&vbox_client, str, &m->map);
 	if (RT_FAILURE(rc)) {
 		free(m, M_VBOXVFS);
 		*mnt = NULL;
@@ -146,9 +146,9 @@ sfprov_unmount(sfp_mount_t *mnt)
 {
 	int rc;
 
-	rc = vboxCallUnmapFolder(&vbox_client, &mnt->map);
+	rc = VbglR0SfUnmapFolder(&vbox_client, &mnt->map);
 	if (RT_FAILURE(rc)) {
-		printf("sfprov_unmount: vboxCallUnmapFolder() failed rc=%d\n", rc);
+		printf("sfprov_unmount: VbglR0SfUnmapFolder() failed rc=%d\n", rc);
 		rc = sfprov_vbox2errno(rc);
 	} else {
 		rc = 0;
@@ -169,7 +169,7 @@ sfprov_get_fsinfo(sfp_mount_t *mnt, sffs_fsinfo_t *fsinfo)
 	uint32_t bytes = sizeof(SHFLVOLINFO);
 	size_t bytesused;
 
-	rc = vboxCallFSInfo(&vbox_client, &mnt->map, 0,
+	rc = VbglR0SfFSInfo(&vbox_client, &mnt->map, 0,
 	    (SHFL_INFO_GET | SHFL_INFO_VOLUME), &bytes, (SHFLDIRINFO *)&info);
 	if (RT_FAILURE(rc))
 		return (sfprov_vbox2errno(rc));
@@ -321,7 +321,7 @@ sfprov_create(
 	sfprov_fmode_from_mode(&parms.Info.Attr.fMode, mode);
 	parms.CreateFlags = SHFL_CF_ACT_CREATE_IF_NEW |
 	    SHFL_CF_ACT_REPLACE_IF_EXISTS | SHFL_CF_ACCESS_READWRITE;
-	rc = vboxCallCreate(&vbox_client, &mnt->map, str, &parms);
+	rc = VbglR0SfCreate(&vbox_client, &mnt->map, str, &parms);
 	free(str, M_VBOXVFS);
 
 	if (RT_FAILURE(rc))
@@ -357,7 +357,7 @@ sfprov_open(sfp_mount_t *mnt, char *path, sfp_file_t **fp)
 	parms.Handle = SHFL_HANDLE_NIL;
 	parms.Info.cbObject = 0;
 	parms.CreateFlags = SHFL_CF_ACT_FAIL_IF_NEW | SHFL_CF_ACCESS_READWRITE;
-	rc = vboxCallCreate(&vbox_client, &mnt->map, str, &parms);
+	rc = VbglR0SfCreate(&vbox_client, &mnt->map, str, &parms);
 	if (RT_FAILURE(rc) && rc != VERR_ACCESS_DENIED) {
 		free(str, M_VBOXVFS);
 		return (sfprov_vbox2errno(rc));
@@ -370,7 +370,7 @@ sfprov_open(sfp_mount_t *mnt, char *path, sfp_file_t **fp)
 		}
 		parms.CreateFlags =
 		    SHFL_CF_ACT_FAIL_IF_NEW | SHFL_CF_ACCESS_READ;
-		rc = vboxCallCreate(&vbox_client, &mnt->map, str, &parms);
+		rc = VbglR0SfCreate(&vbox_client, &mnt->map, str, &parms);
 		if (RT_FAILURE(rc)) {
 			free(str, M_VBOXVFS);
 			return (sfprov_vbox2errno(rc));
@@ -405,13 +405,13 @@ sfprov_trunc(sfp_mount_t *mnt, char *path)
 	parms.Info.cbObject = 0;
 	parms.CreateFlags = SHFL_CF_ACT_FAIL_IF_NEW | SHFL_CF_ACCESS_READWRITE |
 	    SHFL_CF_ACT_OVERWRITE_IF_EXISTS;
-	rc = vboxCallCreate(&vbox_client, &mnt->map, str, &parms);
+	rc = VbglR0SfCreate(&vbox_client, &mnt->map, str, &parms);
 	free(str, M_VBOXVFS);
 
 	if (RT_FAILURE(rc)) {
 		return (sfprov_vbox2errno(rc));
 	}
-	(void)vboxCallClose(&vbox_client, &mnt->map, parms.Handle);
+	(void)VbglR0SfClose(&vbox_client, &mnt->map, parms.Handle);
 	return (0);
 }
 
@@ -420,7 +420,7 @@ sfprov_close(sfp_file_t *fp)
 {
 	int rc;
 
-	rc = vboxCallClose(&vbox_client, &fp->map, fp->handle);
+	rc = VbglR0SfClose(&vbox_client, &fp->map, fp->handle);
 	free(fp, M_VBOXVFS);
 	return (0);
 }
@@ -431,7 +431,7 @@ sfprov_read(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes,
 {
 	int rc;
 
-	rc = vboxCallRead(&vbox_client, &fp->map, fp->handle, offset,
+	rc = VbglR0SfRead(&vbox_client, &fp->map, fp->handle, offset,
 	    numbytes, (uint8_t *)buffer, buflocked);
 	if (RT_FAILURE(rc))
 		return (sfprov_vbox2errno(rc));
@@ -444,7 +444,7 @@ sfprov_write(sfp_file_t *fp, char *buffer, uint64_t offset, uint32_t *numbytes,
 {
 	int rc;
 
-	rc = vboxCallWrite(&vbox_client, &fp->map, fp->handle, offset,
+	rc = VbglR0SfWrite(&vbox_client, &fp->map, fp->handle, offset,
 	    numbytes, (uint8_t *)buffer, buflocked);
 	if (RT_FAILURE(rc))
 		return (sfprov_vbox2errno(rc));
@@ -456,7 +456,7 @@ sfprov_fsync(sfp_file_t *fp)
 {
 	int rc;
 
-	rc = vboxCallFlush(&vbox_client, &fp->map, fp->handle);
+	rc = VbglR0SfFlush(&vbox_client, &fp->map, fp->handle);
 	if (RT_FAILURE(rc))
 		return (sfprov_vbox2errno(rc));
 	return (0);
@@ -475,7 +475,7 @@ sfprov_getinfo(sfp_mount_t *mnt, char *path, PSHFLFSOBJINFO info)
 	parms.Handle = 0;
 	parms.Info.cbObject = 0;
 	parms.CreateFlags = SHFL_CF_LOOKUP | SHFL_CF_ACT_FAIL_IF_NEW;
-	rc = vboxCallCreate(&vbox_client, &mnt->map, str, &parms);
+	rc = VbglR0SfCreate(&vbox_client, &mnt->map, str, &parms);
 	free(str, M_VBOXVFS);
 
 	if (RT_FAILURE(rc))
@@ -598,10 +598,10 @@ sfprov_set_attr(
 			  | SHFL_CF_ACT_FAIL_IF_NEW
 			  | SHFL_CF_ACCESS_ATTR_WRITE;
 
-	rc = vboxCallCreate(&vbox_client, &mnt->map, str, &parms);
+	rc = VbglR0SfCreate(&vbox_client, &mnt->map, str, &parms);
 
 	if (RT_FAILURE(rc)) {
-		printf("sfprov_set_attr: vboxCallCreate(%s) failed rc=%d\n",
+		printf("sfprov_set_attr: VbglR0SfCreate(%s) failed rc=%d\n",
 		    path, rc);
 		err = sfprov_vbox2errno(rc);
 		goto fail2;
@@ -623,12 +623,12 @@ sfprov_set_attr(
 		sfprov_timespec_from_ftime(&info.ChangeTime, ctime);
 #endif
 	bytes = sizeof(info);
-	rc = vboxCallFSInfo(&vbox_client, &mnt->map, parms.Handle,
+	rc = VbglR0SfFSInfo(&vbox_client, &mnt->map, parms.Handle,
 	    (SHFL_INFO_SET | SHFL_INFO_FILE), &bytes, (SHFLDIRINFO *)&info);
 	if (RT_FAILURE(rc)) {
 		if (rc != VERR_ACCESS_DENIED && rc != VERR_WRITE_PROTECT)
 		{
-			printf("sfprov_set_attr: vboxCallFSInfo(%s, FILE) failed rc=%d\n",
+			printf("sfprov_set_attr: VbglR0SfFSInfo(%s, FILE) failed rc=%d\n",
 		    path, rc);
 		}
 		err = sfprov_vbox2errno(rc);
@@ -638,9 +638,9 @@ sfprov_set_attr(
 	err = 0;
 
 fail1:
-	rc = vboxCallClose(&vbox_client, &mnt->map, parms.Handle);
+	rc = VbglR0SfClose(&vbox_client, &mnt->map, parms.Handle);
 	if (RT_FAILURE(rc)) {
-		printf("sfprov_set_attr: vboxCallClose(%s) failed rc=%d\n",
+		printf("sfprov_set_attr: VbglR0SfClose(%s) failed rc=%d\n",
 		    path, rc);
 	}
 fail2:
@@ -665,10 +665,10 @@ sfprov_set_size(sfp_mount_t *mnt, char *path, uint64_t size)
 			  | SHFL_CF_ACT_FAIL_IF_NEW
 			  | SHFL_CF_ACCESS_WRITE;
 
-	rc = vboxCallCreate(&vbox_client, &mnt->map, str, &parms);
+	rc = VbglR0SfCreate(&vbox_client, &mnt->map, str, &parms);
 
 	if (RT_FAILURE(rc)) {
-		printf("sfprov_set_size: vboxCallCreate(%s) failed rc=%d\n",
+		printf("sfprov_set_size: VbglR0SfCreate(%s) failed rc=%d\n",
 		    path, rc);
 		err = sfprov_vbox2errno(rc);
 		goto fail2;
@@ -681,10 +681,10 @@ sfprov_set_size(sfp_mount_t *mnt, char *path, uint64_t size)
 	RT_ZERO(info);
 	info.cbObject = size;
 	bytes = sizeof(info);
-	rc = vboxCallFSInfo(&vbox_client, &mnt->map, parms.Handle,
+	rc = VbglR0SfFSInfo(&vbox_client, &mnt->map, parms.Handle,
 	    (SHFL_INFO_SET | SHFL_INFO_SIZE), &bytes, (SHFLDIRINFO *)&info);
 	if (RT_FAILURE(rc)) {
-		printf("sfprov_set_size: vboxCallFSInfo(%s, SIZE) failed rc=%d\n",
+		printf("sfprov_set_size: VbglR0SfFSInfo(%s, SIZE) failed rc=%d\n",
 		    path, rc);
 		err = sfprov_vbox2errno(rc);
 		goto fail1;
@@ -693,9 +693,9 @@ sfprov_set_size(sfp_mount_t *mnt, char *path, uint64_t size)
 	err = 0;
 
 fail1:
-	rc = vboxCallClose(&vbox_client, &mnt->map, parms.Handle);
+	rc = VbglR0SfClose(&vbox_client, &mnt->map, parms.Handle);
 	if (RT_FAILURE(rc)) {
-		printf("sfprov_set_size: vboxCallClose(%s) failed rc=%d\n",
+		printf("sfprov_set_size: VbglR0SfClose(%s) failed rc=%d\n",
 		    path, rc);
 	}
 fail2:
@@ -726,7 +726,7 @@ sfprov_mkdir(
 	sfprov_fmode_from_mode(&parms.Info.Attr.fMode, mode);
 	parms.CreateFlags = SHFL_CF_DIRECTORY | SHFL_CF_ACT_CREATE_IF_NEW |
 	    SHFL_CF_ACT_FAIL_IF_EXISTS | SHFL_CF_ACCESS_READ;
-	rc = vboxCallCreate(&vbox_client, &mnt->map, str, &parms);
+	rc = VbglR0SfCreate(&vbox_client, &mnt->map, str, &parms);
 	free(str, M_VBOXVFS);
 
 	if (RT_FAILURE(rc))
@@ -749,7 +749,7 @@ sfprov_set_show_symlinks(void)
 {
 	int rc;
 
-	rc = vboxCallSetSymlinks(&vbox_client);
+	rc = VbglR0SfSetSymlinks(&vbox_client);
 	if (RT_FAILURE(rc))
 		return (sfprov_vbox2errno(rc));
 
@@ -764,7 +764,7 @@ sfprov_remove(sfp_mount_t *mnt, char *path, u_int is_link)
 	int size;
 
 	str = sfprov_string(path, &size);
-	rc = vboxCallRemove(&vbox_client, &mnt->map, str,
+	rc = VbglR0SfRemove(&vbox_client, &mnt->map, str,
 		SHFL_REMOVE_FILE | (is_link ? SHFL_REMOVE_SYMLINK : 0));
 	free(str, M_VBOXVFS);
 	if (RT_FAILURE(rc))
@@ -785,7 +785,7 @@ sfprov_readlink(
 
 	str = sfprov_string(path, &size);
 
-	rc = vboxReadLink(&vbox_client, &mnt->map, str, (uint32_t) tgt_size,
+	rc = VbglR0SfReadLink(&vbox_client, &mnt->map, str, (uint32_t) tgt_size,
 	    target);
 	if (RT_FAILURE(rc))
 		rc = sfprov_vbox2errno(rc);
@@ -809,7 +809,7 @@ sfprov_symlink(
 	lnk = sfprov_string(linkname, &lnk_size);
 	tgt = sfprov_string(target, &tgt_size);
 
-	rc = vboxCallSymlink(&vbox_client, &mnt->map, lnk, tgt, &info);
+	rc = VbglR0SfSymlink(&vbox_client, &mnt->map, lnk, tgt, &info);
 	if (RT_FAILURE(rc)) {
 		rc = sfprov_vbox2errno(rc);
 		goto done;
@@ -833,7 +833,7 @@ sfprov_rmdir(sfp_mount_t *mnt, char *path)
 	int size;
 
 	str = sfprov_string(path, &size);
-	rc = vboxCallRemove(&vbox_client, &mnt->map, str, SHFL_REMOVE_DIR);
+	rc = VbglR0SfRemove(&vbox_client, &mnt->map, str, SHFL_REMOVE_DIR);
 	free(str, M_VBOXVFS);
 	if (RT_FAILURE(rc))
 		return (sfprov_vbox2errno(rc));
@@ -849,7 +849,7 @@ sfprov_rename(sfp_mount_t *mnt, char *from, char *to, u_int is_dir)
 
 	old = sfprov_string(from, &old_size);
 	new = sfprov_string(to, &new_size);
-	rc = vboxCallRename(&vbox_client, &mnt->map, old, new,
+	rc = VbglR0SfRename(&vbox_client, &mnt->map, old, new,
 	    (is_dir ? SHFL_RENAME_DIR : SHFL_RENAME_FILE) |
 	    SHFL_RENAME_REPLACE_IF_EXISTS);
 	free(old, M_VBOXVFS);
@@ -927,7 +927,7 @@ sfprov_readdir(
 	free(cp, M_VBOXVFS);
 
 	/*
-	 * Now loop using vboxCallDirInfo
+	 * Now loop using VbglR0SfDirInfo
 	 */
 	infobuff = malloc(infobuff_alloc, M_VBOXVFS, M_WAITOK | M_ZERO);
 	if (infobuff == NULL) {
@@ -938,7 +938,7 @@ sfprov_readdir(
 	offset = 0;
 	for (;;) {
 		numbytes = infobuff_alloc;
-		error = vboxCallDirInfo(&vbox_client, &fp->map, fp->handle,
+		error = VbglR0SfDirInfo(&vbox_client, &fp->map, fp->handle,
 		    mask_str, 0, 0, &numbytes, infobuff, &nents);
 
 		switch (error) {
