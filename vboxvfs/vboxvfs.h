@@ -106,7 +106,6 @@ MALLOC_DECLARE(M_VBOXVFS);
 #include "../../../../../include/iprt/uni.h"
 
 #include "../../common/VBoxGuestLib/SysHlp.h"
-#include "../../common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.h"
 
 #else
 
@@ -154,13 +153,13 @@ MALLOC_DECLARE(M_VBOXVFS);
 #include "iprt/uni.h"
 
 #include "common/VBoxGuestLib/SysHlp.h"
-#include "common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.h"
 
 #endif /* !FREEBSD_STYLE */
 
 #include <sys/mount.h>
 #include <sys/vnode.h> 
 #include <sys/_timespec.h>
+#include <VBox/VBoxGuestLibSharedFolders.h>
 
 #define	VBOXVFS_DEBUG(lvl, ...)	do {					\
 	if (vboxvfs_debug >= (lvl)) {					\

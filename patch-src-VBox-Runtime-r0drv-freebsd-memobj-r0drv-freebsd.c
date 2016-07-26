@@ -1,5 +1,5 @@
 --- src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c.orig	2016-07-18 19:56:55.000000000 +0800
-+++ src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c	2016-07-25 15:24:09.391093000 +0800
++++ src/VBox/Runtime/r0drv/freebsd/memobj-r0drv-freebsd.c	2016-07-26 16:04:55.282395000 +0800
 @@ -121,16 +121,15 @@
  
          case RTR0MEMOBJTYPE_LOCK:
@@ -64,7 +64,7 @@
      for (vm_pindex_t iPage = 0; iPage < cPages; iPage++)
      {
          vm_page_t pPage = pPages + iPage;
-@@ -259,13 +260,8 @@
+@@ -259,13 +260,9 @@
              atomic_add_int(&cnt.v_wire_count, 1);
          }
      }
@@ -72,21 +72,16 @@
 -    VM_OBJECT_WUNLOCK(pObject);
 -#else
      VM_OBJECT_UNLOCK(pObject);
--#endif
+ #endif
      return pPages;
 -#endif
  }
  
  static int rtR0MemObjFreeBSDPhysAllocHelper(vm_object_t pObject, u_long cPages,
-@@ -287,21 +283,18 @@
-         if (!pPage)
-         {
-             /* Free all allocated pages */
--#if __FreeBSD_version >= 1000030
--            VM_OBJECT_WLOCK(pObject);
--#else
+@@ -292,16 +289,17 @@
+ #else
              VM_OBJECT_LOCK(pObject);
--#endif
+ #endif
 +
              while (iPage-- > 0)
              {
@@ -103,7 +98,7 @@
                  vm_page_unlock_queues();
  #endif
              }
-@@ -519,14 +512,19 @@
+@@ -519,14 +517,19 @@
      if (!pMemFreeBSD)
          return VERR_NO_MEMORY;
  
@@ -131,7 +126,7 @@
      if (rc == KERN_SUCCESS)
      {
          pMemFreeBSD->Core.u.Lock.R0Process = R0Process;
-@@ -751,7 +749,12 @@
+@@ -751,7 +754,12 @@
      {
          /** @todo: is this needed?. */
          PROC_LOCK(pProc);
@@ -145,7 +140,7 @@
          PROC_UNLOCK(pProc);
      }
      else
-@@ -850,11 +853,15 @@
+@@ -850,11 +858,15 @@
  
              vm_offset_t pb = (vm_offset_t)pMemFreeBSD->Core.pv + ptoa(iPage);
  
