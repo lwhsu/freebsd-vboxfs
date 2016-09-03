@@ -169,7 +169,7 @@ sfprov_get_fsinfo(sfp_mount_t *mnt, sffs_fsinfo_t *fsinfo)
 	uint32_t bytes = sizeof(SHFLVOLINFO);
 	size_t bytesused;
 
-	rc = VbglR0SfFSInfo(&vbox_client, &mnt->map, 0,
+	rc = VbglR0SfFsInfo(&vbox_client, &mnt->map, 0,
 	    (SHFL_INFO_GET | SHFL_INFO_VOLUME), &bytes, (SHFLDIRINFO *)&info);
 	if (RT_FAILURE(rc))
 		return (sfprov_vbox2errno(rc));
@@ -623,12 +623,12 @@ sfprov_set_attr(
 		sfprov_timespec_from_ftime(&info.ChangeTime, ctime);
 #endif
 	bytes = sizeof(info);
-	rc = VbglR0SfFSInfo(&vbox_client, &mnt->map, parms.Handle,
+	rc = VbglR0SfFsInfo(&vbox_client, &mnt->map, parms.Handle,
 	    (SHFL_INFO_SET | SHFL_INFO_FILE), &bytes, (SHFLDIRINFO *)&info);
 	if (RT_FAILURE(rc)) {
 		if (rc != VERR_ACCESS_DENIED && rc != VERR_WRITE_PROTECT)
 		{
-			printf("sfprov_set_attr: VbglR0SfFSInfo(%s, FILE) failed rc=%d\n",
+			printf("sfprov_set_attr: VbglR0SfFsInfo(%s, FILE) failed rc=%d\n",
 		    path, rc);
 		}
 		err = sfprov_vbox2errno(rc);
@@ -681,10 +681,10 @@ sfprov_set_size(sfp_mount_t *mnt, char *path, uint64_t size)
 	RT_ZERO(info);
 	info.cbObject = size;
 	bytes = sizeof(info);
-	rc = VbglR0SfFSInfo(&vbox_client, &mnt->map, parms.Handle,
+	rc = VbglR0SfFsInfo(&vbox_client, &mnt->map, parms.Handle,
 	    (SHFL_INFO_SET | SHFL_INFO_SIZE), &bytes, (SHFLDIRINFO *)&info);
 	if (RT_FAILURE(rc)) {
-		printf("sfprov_set_size: VbglR0SfFSInfo(%s, SIZE) failed rc=%d\n",
+		printf("sfprov_set_size: VbglR0SfFsInfo(%s, SIZE) failed rc=%d\n",
 		    path, rc);
 		err = sfprov_vbox2errno(rc);
 		goto fail1;
