@@ -962,7 +962,7 @@ sfprov_readdir(
 
 			/* expand buffers if we need more space */
 			reclen = DIRENT_RECLEN(strlen(info->name.String.utf8));
-			entlen = sizeof(sffs_stat_t) + reclen;
+			entlen = sizeof(struct sffs_dirent) + reclen;
 			buflen = SFFS_DIRENTS_OFF + cur_buf->sf_len + entlen;
 			if (buflen > SFFS_DIRENTS_SIZE) {
 				cur_buf->sf_next = malloc(SFFS_DIRENTS_SIZE,

@@ -750,7 +750,7 @@ vboxfs_readdir(struct vop_readdir_args *ap)
 		while (off < uio->uio_offset) {
                         if (dirent->sf_off == uio->uio_offset)
                                 break;
-			step = sizeof(sffs_stat_t) + dirent->sf_entry.d_reclen;
+			step = sizeof(struct sffs_dirent) + dirent->sf_entry.d_reclen;
 			dirent = (struct sffs_dirent *) (((char *) dirent) + step);
 			off += step;
 		}
@@ -804,7 +804,7 @@ vboxfs_readdir(struct vop_readdir_args *ap)
 			break;
 
 		uio->uio_offset = dirent->sf_off;
-		offset += sizeof(sffs_stat_t) + dirent->sf_entry.d_reclen;
+		offset += sizeof(struct sffs_dirent) + dirent->sf_entry.d_reclen;
 	}
 
 	if (error == 0 && cur_buf == NULL)
