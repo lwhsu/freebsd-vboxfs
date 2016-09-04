@@ -466,7 +466,6 @@ vboxfs_statfs(struct mount *mp, struct statfs *sbp)
 
 	vboxfsmp = VFSTOVBOXFS(mp);
 
-	bzero(sbp, sizeof(*sbp));
 	error = sfprov_get_fsinfo(vboxfsmp->sf_handle, &fsinfo);
 	if (error != 0)
 		return (error);
