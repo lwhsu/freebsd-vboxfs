@@ -42,6 +42,7 @@ static vop_access_t	vboxfs_access;
 static vop_getattr_t	vboxfs_getattr;
 static vop_setattr_t	vboxfs_setattr;
 static vop_read_t	vboxfs_read;
+static vop_readlink_t	vboxfs_readlink;
 static vop_write_t	vboxfs_write;
 static vop_fsync_t	vboxfs_fsync;
 static vop_remove_t	vboxfs_remove;
@@ -83,6 +84,7 @@ struct vop_vector vboxfs_vnodeops = {
 	.vop_print	= vboxfs_print,
 	.vop_read	= vboxfs_read,
 	.vop_readdir	= vboxfs_readdir,
+	.vop_readlink	= vboxfs_readlink,
 	.vop_reclaim	= vboxfs_reclaim,
 	.vop_remove	= vboxfs_remove,
 	.vop_rename	= vboxfs_rename,
@@ -821,6 +823,38 @@ vboxfs_readdir(struct vop_readdir_args *ap)
 done:
 	if (error != 0)
 		uio->uio_offset = orig_off;
+	return (error);
+}
+
+static int
+vboxfs_readlink(struct vop_readlink_args *v)
+{
+	struct vnode *vp = v->a_vp;
+	struct uio *uio = v->a_uio;
+
+	int error;
+	struct vboxfs_node *np;
+	void *tmpbuf;
+
+	MPASS(uio->uio_offset == 0);
+	MPASS(vp->v_type == VLNK);
+
+	np = VP_TO_VBOXFS_NODE(vp);
+
+	tmpbuf = contigmalloc(MAXPATHLEN, M_DEVBUF, M_WAITOK, 0, ~0, 1, 0);
+	if (tmpbuf == NULL)
+		return (ENOMEM);
+
+	error = sfprov_readlink(np->vboxfsmp->sf_handle, np->sf_path, tmpbuf,
+	    MAXPATHLEN);
+	if (error)
+		goto done;
+
+	error = uiomove(tmpbuf, strlen(tmpbuf), uio);
+
+done:
+	if (tmpbuf)
+		contigfree(tmpbuf, MAXPATHLEN, M_DEVBUF);
 	return (error);
 }
 
