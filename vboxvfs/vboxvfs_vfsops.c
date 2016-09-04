@@ -471,6 +471,7 @@ vboxfs_statfs(struct mount *mp, struct statfs *sbp)
 	if (error != 0)
 		return (error);
 
+	sbp->f_iosize = fsinfo.blksize;
 	sbp->f_bsize = fsinfo.blksize;
 
 	sbp->f_bfree = fsinfo.blksavail;
