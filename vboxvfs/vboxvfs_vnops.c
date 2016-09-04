@@ -602,6 +602,7 @@ vboxfs_read(struct vop_read_args *ap)
 	uint32_t		done;
 	unsigned long		offset;
 	ssize_t			total;
+	void			*tmpbuf;
 
 	if (vp->v_type == VDIR)
 		return (EISDIR);
@@ -624,13 +625,24 @@ vboxfs_read(struct vop_read_args *ap)
 	if (np->sf_file == NULL)
 		return (ENXIO);
 
+	/*
+	 * XXXGONZO: this is just to get things working
+	 * should be optimized
+	 */
+	tmpbuf = contigmalloc(PAGE_SIZE, M_DEVBUF, M_WAITOK, 0, ~0, PAGE_SIZE, 0);
+	if (tmpbuf == 0)
+		return (ENOMEM);
+
 	do {
 		offset = uio->uio_offset;
-		done = bytes = min(MAXPHYS, uio->uio_resid);
-		error = sfprov_read(np->sf_file, uio->uio_iov->iov_base,
-		    offset, &done, uio->uio_segflg == UIO_SYSSPACE);
-		uio->uio_resid -= done;
+		done = bytes = min(PAGE_SIZE, uio->uio_resid);
+		error = sfprov_read(np->sf_file, tmpbuf,
+		    offset, &done, 0);
+		if (error == 0 && done > 0)
+			error = uiomove(tmpbuf, done, uio);
 	} while (error == 0 && uio->uio_resid > 0 && done > 0);
+
+	contigfree(tmpbuf, PAGE_SIZE, M_DEVBUF);
 
 	/* a partial read is never an error */
 	if (total != uio->uio_resid)
