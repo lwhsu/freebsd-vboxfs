@@ -57,9 +57,7 @@ static vop_pathconf_t	vboxfs_pathconf;
 static vop_advlock_t	vboxfs_advlock;
 static vop_getextattr_t	vboxfs_getextattr;
 static vop_ioctl_t	vboxfs_ioctl;
-static vop_getpages_t	vboxfs_getpages;
 static vop_inactive_t	vboxfs_inactive;
-static vop_putpages_t	vboxfs_putpages;
 static vop_reclaim_t	vboxfs_reclaim;
 static vop_vptofh_t	vboxfs_vptofh;
 
@@ -73,7 +71,6 @@ struct vop_vector vboxfs_vnodeops = {
 	.vop_fsync	= vboxfs_fsync,
 	.vop_getattr	= vboxfs_getattr,
 	.vop_getextattr = vboxfs_getextattr,
-	.vop_getpages	= vboxfs_getpages,
 	.vop_inactive	= vboxfs_inactive,
 	.vop_ioctl	= vboxfs_ioctl,
 	.vop_link	= vboxfs_link,
@@ -84,7 +81,6 @@ struct vop_vector vboxfs_vnodeops = {
 	.vop_open	= vboxfs_open,
 	.vop_pathconf	= vboxfs_pathconf,
 	.vop_print	= vboxfs_print,
-	.vop_putpages	= vboxfs_putpages,
 	.vop_read	= vboxfs_read,
 	.vop_readdir	= vboxfs_readdir,
 	.vop_reclaim	= vboxfs_reclaim,
@@ -95,6 +91,7 @@ struct vop_vector vboxfs_vnodeops = {
 	.vop_vptofh 	= vboxfs_vptofh,
 	.vop_symlink	= vboxfs_symlink,
 	.vop_write	= vboxfs_write,
+	.vop_bmap	= VOP_EOPNOTSUPP
 };
 
 static uint64_t
@@ -1011,20 +1008,6 @@ vboxfs_reclaim(struct vop_reclaim_args *ap)
 
 static int
 vboxfs_vptofh(struct vop_vptofh_args *ap)
-{
-
-	return (EOPNOTSUPP);
-}
-
-static int
-vboxfs_getpages(struct vop_getpages_args *ap)
-{
-
-	return (EOPNOTSUPP);
-}
-
-static int
-vboxfs_putpages(struct vop_putpages_args *ap)
 {
 
 	return (EOPNOTSUPP);
