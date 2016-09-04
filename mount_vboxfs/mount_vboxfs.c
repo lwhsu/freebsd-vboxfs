@@ -82,7 +82,7 @@ main(int argc, char *argv[])
 	int iovlen;
 	int ronly = 0;
 	int error, ch;
-	int mntflags;
+	int mntflags = 0;
 
 	iov = NULL;
 	iovlen = 0;
@@ -148,7 +148,6 @@ main(int argc, char *argv[])
 	}
 
 	/* VBOXFS file systems are not currently writeable. */
-	mntflags |= MNT_RDONLY;
 	build_iovec(&iov, &iovlen, "fstype", vboxfs_vfsname, (size_t)-1);
 	build_iovec(&iov, &iovlen, "fspath", mount_point, (size_t)-1);
 	build_iovec(&iov, &iovlen, "from", host_name, (size_t)-1);
