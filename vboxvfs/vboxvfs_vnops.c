@@ -659,7 +659,46 @@ vboxfs_write(struct vop_write_args *ap)
 static int
 vboxfs_create(struct vop_create_args *ap)
 {
-	return (EOPNOTSUPP);
+	struct vnode *dvp = ap->a_dvp;
+	struct vnode **vpp = ap->a_vpp;
+	struct componentname *cnp = ap->a_cnp;
+	struct vattr *vap = ap->a_vap;
+	sffs_stat_t	*stat, tmp_stat;
+	char	*fullpath = NULL;
+	struct vboxfs_node *dir = VP_TO_VBOXFS_NODE(dvp);
+	struct vboxfs_node *unode;
+	sfp_file_t *fp;
+	int error;
+	struct 	vboxfs_mnt *vboxfsmp = dir->vboxfsmp;
+
+	MPASS(vap->va_type == VREG);
+
+	stat = &tmp_stat;
+	fullpath = sfnode_construct_path(dir, cnp->cn_nameptr, cnp->cn_namelen);
+	error = sfprov_create(dir->vboxfsmp->sf_handle, fullpath, vap->va_mode,
+	    &fp, stat);
+
+	if (error)
+		goto out;
+
+	error = vboxfs_alloc_node(vboxfsmp->sf_vfsp, vboxfsmp, fullpath, VREG, 0,
+			0, 0755, dir, &unode);
+
+	if (error) // TODO: free unode
+		goto out;
+
+	error = vboxfs_alloc_vp(vboxfsmp->sf_vfsp, unode, cnp->cn_lkflags, vpp);
+out:
+	if (fullpath)
+		free(fullpath, M_VBOXVFS);
+
+	if (error == 0) {
+		vfsnode_clear_dir_list(dir);
+		if ((cnp->cn_flags & MAKEENTRY) != 0)
+			cache_enter(dvp, *vpp, cnp);
+	}
+
+	return (error);
 }
 
 static int
