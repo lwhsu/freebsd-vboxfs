@@ -398,13 +398,13 @@ vboxfs_unmount(struct mount *mp, int mntflags)
 static int
 vboxfs_root(struct mount *mp, int flags, struct vnode **vpp)
 {
-        int error;
-        error = vboxfs_alloc_vp(mp, VFSTOVBOXFS(mp)->sf_root, flags, vpp);
+	int error;
+	error = vboxfs_alloc_vp(mp, VFSTOVBOXFS(mp)->sf_root, flags, vpp);
 
-        if (!error)
-                (*vpp)->v_vflag |= VV_ROOT;
+	if (!error)
+		(*vpp)->v_vflag |= VV_ROOT;
 
-        return error;
+	return error;
 }
 
 /*

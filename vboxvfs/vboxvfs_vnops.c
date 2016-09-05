@@ -99,9 +99,9 @@ struct vop_vector vboxfs_vnodeops = {
 static uint64_t
 vsfnode_cur_time_usec(void)
 {
-        struct timeval now;
+	struct timeval now;
 
-        getmicrotime(&now);
+	getmicrotime(&now);
 
 	return (now.tv_sec*1000 + now.tv_usec);
 }
@@ -919,8 +919,8 @@ vboxfs_readdir(struct vop_readdir_args *ap)
 		dirent = &cur_buf->sf_entries[0];
 
 		while (off < uio->uio_offset) {
-                        if (dirent->sf_off == uio->uio_offset)
-                                break;
+			if (dirent->sf_off == uio->uio_offset)
+				break;
 			step = sizeof(struct sffs_dirent) + dirent->sf_entry.d_reclen;
 			dirent = (struct sffs_dirent *) (((char *) dirent) + step);
 			off += step;
