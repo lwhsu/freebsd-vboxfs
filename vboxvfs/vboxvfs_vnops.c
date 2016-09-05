@@ -346,16 +346,16 @@ vboxfs_vn_get_ino_alloc(struct mount *mp, void *arg, int lkflags,
  * This handles ".." and "."
  */
 static char *
-sfnode_construct_path(struct vboxfs_node *node, char *tail)
+sfnode_construct_path(struct vboxfs_node *node, char *tail, int len)
 {
 	char *p;
 
-	if (strcmp(tail, ".") == 0 || strcmp(tail, "..") == 0)
+	if (strncmp(tail, ".", len) == 0 || strncmp(tail, "..", len) == 0)
 		panic("construct path for %s", tail);
-	p = malloc(strlen(node->sf_path) + 1 + strlen(tail) + 1, M_VBOXVFS, M_WAITOK);
+	p = malloc(strlen(node->sf_path) + 1 + len + 1, M_VBOXVFS, M_WAITOK);
 	strcpy(p, node->sf_path);
 	strcat(p, "/");
-	strcat(p, tail);
+	strncat(p, tail, len);
 	return (p);
 }
 
@@ -376,6 +376,7 @@ vboxfs_access(struct vop_access_args *ap)
 			break;
 		}
 	}
+
 	return (vaccess(vp->v_type, 0444, 0, 0,
 	    accmode, ap->a_cred, NULL));
 }
@@ -970,7 +971,7 @@ vboxfs_lookup(struct vop_cachedlookup_args /* {
 		mode_t m;
 		type = VNON;
 		stat = &tmp_stat;
-		fullpath = sfnode_construct_path(node, cnp->cn_nameptr);
+		fullpath = sfnode_construct_path(node, cnp->cn_nameptr, cnp->cn_namelen);
 		error = sfprov_get_attr(node->vboxfsmp->sf_handle,
 		    fullpath, stat);
 		// stat_time = vsfnode_cur_time_usec();
