@@ -654,7 +654,59 @@ vboxfs_read(struct vop_read_args *ap)
 static int
 vboxfs_write(struct vop_write_args *ap)
 {
-	return (EOPNOTSUPP);
+	struct vnode		*vp = ap->a_vp;
+	struct uio 		*uio = ap->a_uio;
+	struct vboxfs_node	*np = VP_TO_VBOXFS_NODE(vp);
+	int			error = 0;
+	uint32_t		bytes;
+	uint32_t		done;
+	unsigned long		offset;
+	ssize_t			total;
+	void			*tmpbuf;
+
+	if (vp->v_type == VDIR)
+		return (EISDIR);
+	if (vp->v_type != VREG)
+		return (EINVAL);
+
+	total = uio->uio_resid;
+	if (total == 0)
+		return (0);
+
+	if (np->sf_file == NULL)
+		return (ENXIO);
+
+	/*
+	 * XXXGONZO: this is just to get things working
+	 * should be optimized
+	 */
+	tmpbuf = contigmalloc(PAGE_SIZE, M_DEVBUF, M_WAITOK, 0, ~0, PAGE_SIZE, 0);
+	if (tmpbuf == 0)
+		return (ENOMEM);
+
+	do {
+		offset = uio->uio_offset;
+		bytes = min(PAGE_SIZE, uio->uio_resid);
+		error = uiomove(tmpbuf, bytes, uio);
+		if (error != 0)
+			break;
+		done = bytes;
+		error = sfprov_write(np->sf_file, tmpbuf,
+		    offset, &done, 0);
+		if (error != 0)
+			break;
+		total -= done;
+		if (done != bytes)
+			uio->uio_resid += bytes - done;
+	} while (error == 0 && uio->uio_resid > 0 && done > 0);
+
+	contigfree(tmpbuf, PAGE_SIZE, M_DEVBUF);
+
+	/* a partial write is never an error */
+	if (total != uio->uio_resid)
+		error = 0;
+	return (error);
+
 }
 
 static int
