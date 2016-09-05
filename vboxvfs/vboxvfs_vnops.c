@@ -575,7 +575,8 @@ vboxfs_setattr(struct vop_setattr_args *ap)
 			return (EISDIR);
 		case VLNK:
 		case VREG:
-			return (EROFS);
+			error = sfprov_set_size(np->vboxfsmp->sf_handle, np->sf_path, vap->va_size);
+			break;
 		case VCHR:
 		case VBLK:
 		case VSOCK:
