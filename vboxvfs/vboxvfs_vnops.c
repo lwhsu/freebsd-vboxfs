@@ -695,7 +695,43 @@ vboxfs_mknod(struct vop_mknod_args *ap)
 static int
 vboxfs_mkdir(struct vop_mkdir_args *ap)
 {
-	return (EOPNOTSUPP);
+	struct vnode *dvp = ap->a_dvp;
+	struct vnode **vpp = ap->a_vpp;
+	struct componentname *cnp = ap->a_cnp;
+	struct vattr *vap = ap->a_vap;
+	sffs_stat_t	*stat, tmp_stat;
+	char	*fullpath = NULL;
+	struct vboxfs_node *dir = VP_TO_VBOXFS_NODE(dvp);
+	struct vboxfs_node *unode;
+	sfp_file_t *fp;
+	int error;
+	struct 	vboxfs_mnt *vboxfsmp = dir->vboxfsmp;
+
+	MPASS(vap->va_type == VDIR);
+
+	stat = &tmp_stat;
+	fullpath = sfnode_construct_path(dir, cnp->cn_nameptr, cnp->cn_namelen);
+	error = sfprov_mkdir(dir->vboxfsmp->sf_handle, fullpath, vap->va_mode,
+	    &fp, stat);
+
+	if (error)
+		goto out;
+
+	error = vboxfs_alloc_node(vboxfsmp->sf_vfsp, vboxfsmp, fullpath, VDIR, 0,
+			0, 0755, dir, &unode);
+
+	if (error) // TODO: free unode
+		goto out;
+
+	error = vboxfs_alloc_vp(vboxfsmp->sf_vfsp, unode, cnp->cn_lkflags, vpp);
+out:
+	if (fullpath)
+		free(fullpath, M_VBOXVFS);
+
+	if (error == 0)
+		vfsnode_clear_dir_list(dir);
+
+	return (error);
 }
 
 static int
@@ -977,8 +1013,30 @@ vboxfs_lookup(struct vop_cachedlookup_args /* {
 		// stat_time = vsfnode_cur_time_usec();
 
 		m = stat->sf_mode;
-		if (error != 0)
-			error = ENOENT;
+		if (error != 0) {
+			/* The entry was not found in the directory.
+			 * This is OK if we are creating or renaming an
+			 * entry and are working on the last component of
+			 * the path name. */
+			if ((cnp->cn_flags & ISLASTCN) &&
+			    (cnp->cn_nameiop == CREATE || \
+			    cnp->cn_nameiop == RENAME ||
+			    (cnp->cn_nameiop == DELETE &&
+			    cnp->cn_flags & DOWHITEOUT &&
+			    cnp->cn_flags & ISWHITEOUT))) {
+				error = VOP_ACCESS(dvp, VWRITE, cnp->cn_cred,
+				    cnp->cn_thread);
+				if (error != 0)
+					goto out;
+
+				/* Keep the component name in the buffer for
+				 * future uses. */
+				cnp->cn_flags |= SAVENAME;
+
+				error = EJUSTRETURN;
+			} else
+				error = ENOENT;
+		}
 		else if (S_ISDIR(m))
 			type = VDIR;
 		else if (S_ISREG(m))
