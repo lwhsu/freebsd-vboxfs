@@ -559,16 +559,13 @@ vboxfs_setattr(struct vop_setattr_args *ap)
 		mode |= S_IFSOCK;
 
 	vfsnode_invalidate_stat_cache(np);
+
 	error = sfprov_set_attr(np->vboxfsmp->sf_handle, np->sf_path,
 	    mode, vap->va_atime, vap->va_mtime, vap->va_ctime);
 #if 0
 	if (error == ENOENT)
 		sfnode_make_stale(np);
 #endif
-	if (vap->va_flags != (u_long)VNOVAL || vap->va_uid != (uid_t)VNOVAL ||
-	    vap->va_gid != (gid_t)VNOVAL || vap->va_atime.tv_sec != VNOVAL ||
-	    vap->va_mtime.tv_sec != VNOVAL || vap->va_mode != (mode_t)VNOVAL)
-		return (EROFS);
 	if (vap->va_size != (u_quad_t)VNOVAL) {
 		switch (vp->v_type) {
 		case VDIR:
