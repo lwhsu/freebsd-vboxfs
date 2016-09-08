@@ -405,11 +405,6 @@ vboxfs_open(struct vop_open_args *ap)
 	int error;
 
 	np = VP_TO_VBOXFS_NODE(ap->a_vp);
-	/*
-	 * XXX need to populate sf_path somehow.  This information is not
-	 *     provided to VOP_OPEN().  This must be why the Solaris
-	 *     version has 'sfnode's in it.
-	 */
 	error = sfprov_open(np->vboxfsmp->sf_handle, np->sf_path, &fp);
 	if (error != 0)
 		return (error);
