@@ -254,20 +254,8 @@ loop1:
 	case VSOCK:
 		/* FALLTHROUGH */
 	case VFIFO:
-		break;
+		/* FALLTHROUGH */
 	case VREG:
-#if 0 
-		vm_object_t object;
-		object = node->sf_reg.sf_aobj;
-		VM_OBJECT_WLOCK(object);
-		VI_LOCK(vp);
-		KASSERT(vp->v_object == NULL, ("Not NULL v_object in vsf"));
-		vp->v_object = object;
-		object->un_pager.swp.swp_vsf = vp;
-		vm_object_set_flag(object, OBJ_VBOXFS);
-		VI_UNLOCK(vp);
-		VM_OBJECT_WUNLOCK(object);
-#endif
 		break;
 	case VDIR:
 		MPASS(node->sf_parent != NULL);
@@ -278,6 +266,7 @@ loop1:
 	default:
 		panic("vboxfs_alloc_vp: type %p %d", node, (int)node->sf_type);
 	}
+
 	if (vp->v_type != VFIFO)
 		VN_LOCK_ASHARE(vp);
 
@@ -342,7 +331,8 @@ vboxfs_vn_get_ino_alloc(struct mount *mp, void *arg, int lkflags,
 }
 
 /*
- * Construct a new pathname given an sfnode plus an optional tail component.
+ * Construct a new pathname given an sfnode plus an optional tail
+ * component of length len
  * This handles ".." and "."
  */
 static char *
