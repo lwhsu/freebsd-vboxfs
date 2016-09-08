@@ -354,6 +354,13 @@ vboxfs_access(struct vop_access_args *ap)
 {
 	struct vnode *vp = ap->a_vp;
 	accmode_t accmode = ap->a_accmode;
+	struct vboxfs_node *node;
+	int error;
+	mode_t m;
+
+	MPASS(VOP_ISLOCKED(vp));
+
+	node = VP_TO_VBOXFS_NODE(vp);
 
 	if ((accmode & VWRITE) && (vp->v_mount->mnt_flag & MNT_RDONLY)) {
 		switch (vp->v_type) {
@@ -367,8 +374,14 @@ vboxfs_access(struct vop_access_args *ap)
 		}
 	}
 
-	return (vaccess(vp->v_type, 0444, 0, 0,
-	    accmode, ap->a_cred, NULL));
+	if (vsfnode_stat_cached(node))
+		error = 0;
+	else
+		error = vsfnode_update_stat_cache(node);
+	m = (error == 0) ? node->sf_stat.sf_mode : 0;
+
+	return (vaccess(vp->v_type, m, node->vboxfsmp->sf_uid,
+	    node->vboxfsmp->sf_gid, accmode, ap->a_cred, NULL));
 }
 
 /*
