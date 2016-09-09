@@ -615,24 +615,16 @@ vboxfs_read(struct vop_read_args *ap)
 
 	if (vp->v_type == VDIR)
 		return (EISDIR);
+
 	if (vp->v_type != VREG)
 		return (EINVAL);
-#if 0
-	if (uio->uio_loffset >= MAXOFFSET_T) {
-		proc_t *p = ttoproc(curthread);
-		(void) rctl_action(rctlproc_legacy[RLIMIT_FSIZE], p->p_rctls,
-		    p, RCA_UNSAFE_SIGINFO);
-		return (EFBIG);
-	}
-	if (uio->uio_loffset < 0)
+
+	if (uio->uio_offset < 0)
 		return (EINVAL);
-#endif
+
 	total = uio->uio_resid;
 	if (total == 0)
 		return (0);
-
-	if (np->sf_file == NULL)
-		return (ENXIO);
 
 	/*
 	 * XXXGONZO: this is just to get things working
@@ -656,6 +648,7 @@ vboxfs_read(struct vop_read_args *ap)
 	/* a partial read is never an error */
 	if (total != uio->uio_resid)
 		error = 0;
+
 	return (error);
 }
 
