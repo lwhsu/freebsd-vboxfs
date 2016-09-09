@@ -775,7 +775,50 @@ out:
 static int
 vboxfs_remove(struct vop_remove_args *ap)
 {
-	return (EOPNOTSUPP);
+	struct vnode *dvp = ap->a_dvp;
+	struct vnode *vp = ap->a_vp;
+	struct componentname *cnp = ap->a_cnp;
+	struct vboxfs_node *np, *dir;
+
+	int error;
+
+	MPASS(VOP_ISLOCKED(dvp));
+	MPASS(VOP_ISLOCKED(vp));
+
+	error = 0;
+
+	np = VP_TO_VBOXFS_NODE(vp);
+	dir = VP_TO_VBOXFS_NODE(vp);
+
+	/*
+	 * If anything else is using this vnode, then fail the remove.
+	 * Why?  Windows hosts can't sfprov_remove() a file that is open,
+	 * so we have to sfprov_close() it first.
+	 * There is no errno for this - since it's not a problem on UNIX,
+	 * but ETXTBSY is the closest.
+	 */
+	if (np->sf_file != NULL) {
+		if (vp->v_usecount > 1) {
+			error = ETXTBSY;
+			goto out;
+		}
+		sfprov_close(np->sf_file);
+		np->sf_file = NULL;
+	}
+
+	error = sfprov_remove(np->vboxfsmp->sf_handle, np->sf_path,
+	    np->sf_type == VLNK);
+
+#if 0
+	if (error == ENOENT || error == 0)
+		sfnode_make_stale(np);
+#endif
+
+	if (error == 0)
+		vfsnode_clear_dir_list(dir);
+
+out:
+	return (error);
 }
 
 static int
