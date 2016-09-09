@@ -327,14 +327,14 @@ vboxfs_free_vp(struct vnode *vp)
  */
 static int
 vboxfs_alloc_file(struct vboxfs_mnt *vboxfsmp, const char *fullpath,
-    enum vtype type, uid_t uid, gid_t gid, mode_t mode, struct vboxfs_node *parent,
+    enum vtype type, mode_t mode, struct vboxfs_node *parent,
     int lkflag, struct vnode **vpp)
 {
 	int error;
 	struct vboxfs_node *unode;
 
 	error = vboxfs_alloc_node(vboxfsmp->sf_vfsp, vboxfsmp, fullpath, type,
-	    uid, gid, mode, parent, &unode);
+	    vboxfsmp->sf_uid, vboxfsmp->sf_gid, mode, parent, &unode);
 
 	if (error)
 		goto out;
@@ -760,8 +760,7 @@ vboxfs_create(struct vop_create_args *ap)
 	if (error)
 		goto out;
 
-	error = vboxfs_alloc_file(vboxfsmp, fullpath, VREG, 0,
-	    0, 0755, dir, cnp->cn_lkflags, vpp);
+	error = vboxfs_alloc_file(vboxfsmp, fullpath, VREG, 0755, dir, cnp->cn_lkflags, vpp);
 
 out:
 	if (fullpath)
@@ -816,8 +815,7 @@ vboxfs_symlink(struct vop_symlink_args *ap)
 	if (error)
 		goto out;
 
-	error = vboxfs_alloc_file(vboxfsmp, fullpath, VLNK, 0,
-	    0, 0755, dir, cnp->cn_lkflags, vpp);
+	error = vboxfs_alloc_file(vboxfsmp, fullpath, VLNK, 0755, dir, cnp->cn_lkflags, vpp);
 
 out:
 	if (fullpath)
@@ -859,8 +857,7 @@ vboxfs_mkdir(struct vop_mkdir_args *ap)
 	if (error)
 		goto out;
 
-	error = vboxfs_alloc_file(vboxfsmp, fullpath, VDIR, 0,
-	    0, 0755, dir, cnp->cn_lkflags, vpp);
+	error = vboxfs_alloc_file(vboxfsmp, fullpath, VDIR, vap->va_mode, dir, cnp->cn_lkflags, vpp);
 
 out:
 	if (fullpath)
@@ -1182,8 +1179,7 @@ vboxfs_lookup(struct vop_cachedlookup_args /* {
 		else if (S_ISLNK(m))
 			type = VLNK;
 		if (error == 0) {
-			error = vboxfs_alloc_file(vboxfsmp, fullpath, type, 0,
-			    0, 0755, node, cnp->cn_lkflags, vpp);
+			error = vboxfs_alloc_file(vboxfsmp, fullpath, type, 0755, node, cnp->cn_lkflags, vpp);
 		}
 	}
 
