@@ -741,7 +741,7 @@ vboxfs_create(struct vop_create_args *ap)
 	struct vnode **vpp = ap->a_vpp;
 	struct componentname *cnp = ap->a_cnp;
 	struct vattr *vap = ap->a_vap;
-	sffs_stat_t	*stat, tmp_stat;
+	sffs_stat_t	stat;
 	char	*fullpath = NULL;
 	struct vboxfs_node *dir = VP_TO_VBOXFS_NODE(dvp);
 	sfp_file_t *fp;
@@ -750,10 +750,9 @@ vboxfs_create(struct vop_create_args *ap)
 
 	MPASS(vap->va_type == VREG);
 
-	stat = &tmp_stat;
 	fullpath = sfnode_construct_path(dir, cnp->cn_nameptr, cnp->cn_namelen);
 	error = sfprov_create(dir->vboxfsmp->sf_handle, fullpath, vap->va_mode,
-	    &fp, stat);
+	    &fp, &stat);
 
 	if (error)
 		goto out;
@@ -798,7 +797,7 @@ vboxfs_symlink(struct vop_symlink_args *ap)
 	struct vnode **vpp = ap->a_vpp;
 	struct componentname *cnp = ap->a_cnp;
 	struct vattr *vap = ap->a_vap;
-	sffs_stat_t	*stat, tmp_stat;
+	sffs_stat_t	stat;
 	char	*fullpath = NULL;
 	struct vboxfs_node *dir = VP_TO_VBOXFS_NODE(dvp);
 	int error;
@@ -806,9 +805,8 @@ vboxfs_symlink(struct vop_symlink_args *ap)
 
 	MPASS(vap->va_type == VLNK);
 
-	stat = &tmp_stat;
 	fullpath = sfnode_construct_path(dir, cnp->cn_nameptr, cnp->cn_namelen);
-	error = sfprov_symlink(dir->vboxfsmp->sf_handle, fullpath, ap->a_target, stat);
+	error = sfprov_symlink(dir->vboxfsmp->sf_handle, fullpath, ap->a_target, &stat);
 
 	if (error)
 		goto out;
@@ -832,7 +830,7 @@ vboxfs_mkdir(struct vop_mkdir_args *ap)
 	struct vnode **vpp = ap->a_vpp;
 	struct componentname *cnp = ap->a_cnp;
 	struct vattr *vap = ap->a_vap;
-	sffs_stat_t	*stat, tmp_stat;
+	sffs_stat_t	stat;
 	char	*fullpath = NULL;
 	struct vboxfs_node *dir = VP_TO_VBOXFS_NODE(dvp);
 	sfp_file_t *fp;
@@ -841,10 +839,9 @@ vboxfs_mkdir(struct vop_mkdir_args *ap)
 
 	MPASS(vap->va_type == VDIR);
 
-	stat = &tmp_stat;
 	fullpath = sfnode_construct_path(dir, cnp->cn_nameptr, cnp->cn_namelen);
 	error = sfprov_mkdir(dir->vboxfsmp->sf_handle, fullpath, vap->va_mode,
-	    &fp, stat);
+	    &fp, &stat);
 
 	if (error)
 		goto out;
@@ -1099,7 +1096,7 @@ vboxfs_lookup(struct vop_cachedlookup_args /* {
 	struct 	vboxfs_mnt *vboxfsmp = node->vboxfsmp;
 	u_long  nameiop = cnp->cn_nameiop;
 	u_long 	flags = cnp->cn_flags;
-	sffs_stat_t	*stat, tmp_stat;
+	sffs_stat_t	stat;
 	//long 	namelen;
 	ino_t 	id = 0;
 	int 	ltype, type, error = 0;
@@ -1121,13 +1118,12 @@ vboxfs_lookup(struct vop_cachedlookup_args /* {
 	} else {
 		mode_t m;
 		type = VNON;
-		stat = &tmp_stat;
 		fullpath = sfnode_construct_path(node, cnp->cn_nameptr, cnp->cn_namelen);
 		error = sfprov_get_attr(node->vboxfsmp->sf_handle,
-		    fullpath, stat);
+		    fullpath, &stat);
 		// stat_time = vsfnode_cur_time_usec();
 
-		m = stat->sf_mode;
+		m = stat.sf_mode;
 		if (error != 0) {
 			/* The entry was not found in the directory.
 			 * This is OK if we are creating or renaming an
