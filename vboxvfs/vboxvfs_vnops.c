@@ -35,7 +35,6 @@
  * Prototypes for VBOXVFS vnode operations
  */
 static vop_create_t	vboxfs_create;
-static vop_mknod_t	vboxfs_mknod;
 static vop_open_t	vboxfs_open;
 static vop_close_t	vboxfs_close;
 static vop_access_t	vboxfs_access;
@@ -56,7 +55,6 @@ static vop_readdir_t	vboxfs_readdir;
 static vop_print_t	vboxfs_print;
 static vop_pathconf_t	vboxfs_pathconf;
 static vop_advlock_t	vboxfs_advlock;
-static vop_getextattr_t	vboxfs_getextattr;
 static vop_ioctl_t	vboxfs_ioctl;
 static vop_inactive_t	vboxfs_inactive;
 static vop_reclaim_t	vboxfs_reclaim;
@@ -66,19 +64,19 @@ struct vop_vector vboxfs_vnodeops = {
 	.vop_default	= &default_vnodeops,
 
 	.vop_access	= vboxfs_access,
-	.vop_advlock	= vboxfs_advlock,
+	.vop_advlock	= VOP_EOPNOTSUPP,
 	.vop_close	= vboxfs_close,
 	.vop_create	= vboxfs_create,
 	.vop_fsync	= vboxfs_fsync,
 	.vop_getattr	= vboxfs_getattr,
-	.vop_getextattr = vboxfs_getextattr,
+	.vop_getextattr = VOP_EOPNOTSUPP,
 	.vop_inactive	= vboxfs_inactive,
 	.vop_ioctl	= vboxfs_ioctl,
 	.vop_link	= vboxfs_link,
 	.vop_lookup	= vfs_cache_lookup,
 	.vop_cachedlookup	= vboxfs_lookup,
 	.vop_mkdir	= vboxfs_mkdir,
-	.vop_mknod	= vboxfs_mknod,
+	.vop_mknod	= VOP_EOPNOTSUPP,
 	.vop_open	= vboxfs_open,
 	.vop_pathconf	= vboxfs_pathconf,
 	.vop_print	= vboxfs_print,
@@ -828,12 +826,6 @@ out:
 }
 
 static int
-vboxfs_mknod(struct vop_mknod_args *ap)
-{
-	return (EOPNOTSUPP);
-}
-
-static int
 vboxfs_mkdir(struct vop_mkdir_args *ap)
 {
 	struct vnode *dvp = ap->a_dvp;
@@ -1085,18 +1077,6 @@ static int
 vboxfs_ioctl(struct vop_ioctl_args *ap)
 {
 	return (ENOTTY);
-}
-
-static int
-vboxfs_getextattr(struct vop_getextattr_args *ap)
-{
-	return (EOPNOTSUPP);
-}
-
-static int
-vboxfs_advlock(struct vop_advlock_args *ap)
-{
-	return (EOPNOTSUPP);
 }
 
 /*
