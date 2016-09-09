@@ -322,6 +322,31 @@ vboxfs_free_vp(struct vnode *vp)
 	vp->v_data = NULL;
 }
 
+/*
+ * Allocate new vboxfs_node and vnode for given file
+ */
+static int
+vboxfs_alloc_file(struct vboxfs_mnt *vboxfsmp, const char *fullpath,
+    enum vtype type, uid_t uid, gid_t gid, mode_t mode, struct vboxfs_node *parent,
+    int lkflag, struct vnode **vpp)
+{
+	int error;
+	struct vboxfs_node *unode;
+
+	error = vboxfs_alloc_node(vboxfsmp->sf_vfsp, vboxfsmp, fullpath, type,
+	    uid, gid, mode, parent, &unode);
+
+	if (error)
+		goto out;
+
+	error = vboxfs_alloc_vp(vboxfsmp->sf_vfsp, unode, lkflag, vpp);
+	if (error)
+		vboxfs_free_node(vboxfsmp, unode);
+
+out:
+	return (error);
+}
+
 static int
 vboxfs_vn_get_ino_alloc(struct mount *mp, void *arg, int lkflags,
     struct vnode **rvp)
@@ -721,7 +746,6 @@ vboxfs_create(struct vop_create_args *ap)
 	sffs_stat_t	*stat, tmp_stat;
 	char	*fullpath = NULL;
 	struct vboxfs_node *dir = VP_TO_VBOXFS_NODE(dvp);
-	struct vboxfs_node *unode;
 	sfp_file_t *fp;
 	int error;
 	struct 	vboxfs_mnt *vboxfsmp = dir->vboxfsmp;
@@ -736,13 +760,9 @@ vboxfs_create(struct vop_create_args *ap)
 	if (error)
 		goto out;
 
-	error = vboxfs_alloc_node(vboxfsmp->sf_vfsp, vboxfsmp, fullpath, VREG, 0,
-			0, 0755, dir, &unode);
+	error = vboxfs_alloc_file(vboxfsmp, fullpath, VREG, 0,
+	    0, 0755, dir, cnp->cn_lkflags, vpp);
 
-	if (error) // TODO: free unode
-		goto out;
-
-	error = vboxfs_alloc_vp(vboxfsmp->sf_vfsp, unode, cnp->cn_lkflags, vpp);
 out:
 	if (fullpath)
 		free(fullpath, M_VBOXVFS);
@@ -784,7 +804,6 @@ vboxfs_symlink(struct vop_symlink_args *ap)
 	sffs_stat_t	*stat, tmp_stat;
 	char	*fullpath = NULL;
 	struct vboxfs_node *dir = VP_TO_VBOXFS_NODE(dvp);
-	struct vboxfs_node *unode;
 	int error;
 	struct 	vboxfs_mnt *vboxfsmp = dir->vboxfsmp;
 
@@ -797,13 +816,9 @@ vboxfs_symlink(struct vop_symlink_args *ap)
 	if (error)
 		goto out;
 
-	error = vboxfs_alloc_node(vboxfsmp->sf_vfsp, vboxfsmp, fullpath, VLNK, 0,
-			0, 0755, dir, &unode);
+	error = vboxfs_alloc_file(vboxfsmp, fullpath, VLNK, 0,
+	    0, 0755, dir, cnp->cn_lkflags, vpp);
 
-	if (error) // TODO: free unode
-		goto out;
-
-	error = vboxfs_alloc_vp(vboxfsmp->sf_vfsp, unode, cnp->cn_lkflags, vpp);
 out:
 	if (fullpath)
 		free(fullpath, M_VBOXVFS);
@@ -830,7 +845,6 @@ vboxfs_mkdir(struct vop_mkdir_args *ap)
 	sffs_stat_t	*stat, tmp_stat;
 	char	*fullpath = NULL;
 	struct vboxfs_node *dir = VP_TO_VBOXFS_NODE(dvp);
-	struct vboxfs_node *unode;
 	sfp_file_t *fp;
 	int error;
 	struct 	vboxfs_mnt *vboxfsmp = dir->vboxfsmp;
@@ -845,13 +859,9 @@ vboxfs_mkdir(struct vop_mkdir_args *ap)
 	if (error)
 		goto out;
 
-	error = vboxfs_alloc_node(vboxfsmp->sf_vfsp, vboxfsmp, fullpath, VDIR, 0,
-			0, 0755, dir, &unode);
+	error = vboxfs_alloc_file(vboxfsmp, fullpath, VDIR, 0,
+	    0, 0755, dir, cnp->cn_lkflags, vpp);
 
-	if (error) // TODO: free unode
-		goto out;
-
-	error = vboxfs_alloc_vp(vboxfsmp->sf_vfsp, unode, cnp->cn_lkflags, vpp);
 out:
 	if (fullpath)
 		free(fullpath, M_VBOXVFS);
@@ -1172,10 +1182,8 @@ vboxfs_lookup(struct vop_cachedlookup_args /* {
 		else if (S_ISLNK(m))
 			type = VLNK;
 		if (error == 0) {
-			struct vboxfs_node *unode;
-			error = vboxfs_alloc_node(vboxfsmp->sf_vfsp, vboxfsmp, fullpath, type, 0,
-	    			0, 0755, node, &unode);
-			error = vboxfs_alloc_vp(vboxfsmp->sf_vfsp, unode, cnp->cn_lkflags, vpp);
+			error = vboxfs_alloc_file(vboxfsmp, fullpath, type, 0,
+			    0, 0755, node, cnp->cn_lkflags, vpp);
 		}
 	}
 
