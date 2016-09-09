@@ -404,15 +404,20 @@ vboxfs_open(struct vop_open_args *ap)
 	sfp_file_t *fp;
 	int error;
 
+	MPASS(VOP_ISLOCKED(vp));
+
 	np = VP_TO_VBOXFS_NODE(ap->a_vp);
 	error = sfprov_open(np->vboxfsmp->sf_handle, np->sf_path, &fp);
 	if (error != 0)
-		return (error);
+		goto out;
 
 	np->sf_file = fp;
 	vnode_create_vobject(ap->a_vp, 0, ap->a_td);
 
-	return (0);
+out:
+	MPASS(VOP_ISLOCKED(vp));
+
+	return (error);
 }
 
 static void
