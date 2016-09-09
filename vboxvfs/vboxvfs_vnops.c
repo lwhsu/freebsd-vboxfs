@@ -501,7 +501,7 @@ vboxfs_getattr(struct vop_getattr_args *ap)
 
 	mode = np->sf_stat.sf_mode;
 
-	vap->va_mode = mode;	/* TODO: mask files access mode and type */
+	vap->va_mode = mode;
 	if (S_ISDIR(mode)) {
 		vap->va_type = VDIR;	/* vnode type (for create) */
 		vap->va_mode = mp->sf_dmode != 0 ? (mp->sf_dmode & 0777) : vap->va_mode;
@@ -574,19 +574,27 @@ vboxfs_setattr(struct vop_setattr_args *ap)
 		case VDIR:
 			return (EISDIR);
 		case VLNK:
+			/* FALLTHROUGH */
 		case VREG:
 			error = sfprov_set_size(np->vboxfsmp->sf_handle, np->sf_path, vap->va_size);
 			break;
 		case VCHR:
+			/* FALLTHROUGH */
 		case VBLK:
+			/* FALLTHROUGH */
 		case VSOCK:
+			/* FALLTHROUGH */
 		case VFIFO:
+			/* FALLTHROUGH */
 		case VNON:
+			/* FALLTHROUGH */
 		case VBAD:
+			/* FALLTHROUGH */
 		case VMARKER:
 			return (0);
 		}
 	}
+
 	return (error);
 }
 
