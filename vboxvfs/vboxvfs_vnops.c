@@ -667,15 +667,16 @@ vboxfs_write(struct vop_write_args *ap)
 
 	if (vp->v_type == VDIR)
 		return (EISDIR);
+
 	if (vp->v_type != VREG)
+		return (EINVAL);
+
+	if (uio->uio_offset < 0)
 		return (EINVAL);
 
 	total = uio->uio_resid;
 	if (total == 0)
 		return (0);
-
-	if (np->sf_file == NULL)
-		return (ENXIO);
 
 	/*
 	 * XXXGONZO: this is just to get things working
@@ -706,8 +707,8 @@ vboxfs_write(struct vop_write_args *ap)
 	/* a partial write is never an error */
 	if (total != uio->uio_resid)
 		error = 0;
-	return (error);
 
+	return (error);
 }
 
 static int
