@@ -760,7 +760,7 @@ vboxfs_create(struct vop_create_args *ap)
 	if (error)
 		goto out;
 
-	error = vboxfs_alloc_file(vboxfsmp, fullpath, VREG, 0755, dir, cnp->cn_lkflags, vpp);
+	error = vboxfs_alloc_file(vboxfsmp, fullpath, VREG, vap->va_mode, dir, cnp->cn_lkflags, vpp);
 
 out:
 	if (fullpath)
@@ -815,7 +815,7 @@ vboxfs_symlink(struct vop_symlink_args *ap)
 	if (error)
 		goto out;
 
-	error = vboxfs_alloc_file(vboxfsmp, fullpath, VLNK, 0755, dir, cnp->cn_lkflags, vpp);
+	error = vboxfs_alloc_file(vboxfsmp, fullpath, VLNK, vap->va_mode, dir, cnp->cn_lkflags, vpp);
 
 out:
 	if (fullpath)
