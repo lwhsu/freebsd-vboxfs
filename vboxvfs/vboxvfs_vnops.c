@@ -471,7 +471,7 @@ vboxfs_close(struct vop_close_args *ap)
 
 	vfsnode_invalidate_stat_cache(np);
 
-	if (np->sf_file != NULL) {
+	if (np->sf_file != NULL && vp->v_usecount <= 1) {
 		(void) sfprov_close(np->sf_file);
 		np->sf_file = NULL;
 	}
