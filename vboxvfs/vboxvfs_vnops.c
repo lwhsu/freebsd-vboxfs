@@ -1231,13 +1231,13 @@ vboxfs_lookup(struct vop_cachedlookup_args /* {
 			} else
 				error = ENOENT;
 		}
-		else if (S_ISDIR(m))
-			type = VDIR;
-		else if (S_ISREG(m))
-			type = VREG;
-		else if (S_ISLNK(m))
-			type = VLNK;
-		if (error == 0) {
+		else {
+			if (S_ISDIR(m))
+				type = VDIR;
+			else if (S_ISREG(m))
+				type = VREG;
+			else if (S_ISLNK(m))
+				type = VLNK;
 			error = vboxfs_alloc_file(vboxfsmp, fullpath, type, 0755, node, cnp->cn_lkflags, vpp);
 		}
 	}
@@ -1247,6 +1247,7 @@ vboxfs_lookup(struct vop_cachedlookup_args /* {
 out:
 	if (fullpath)
 		free(fullpath, M_VBOXVFS);
+
 	return (error);
 }
 
