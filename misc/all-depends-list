@@ -12,7 +12,6 @@ gcc-ecj
 gettext-runtime
 gettext-tools
 gmake
-gmake-lite
 gmp
 help2man
 kBuild
