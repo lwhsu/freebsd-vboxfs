@@ -226,7 +226,7 @@ loop1:
 		goto loop;
 	} else
 		node->sf_vpstate |= VBOXFS_VNODE_ALLOCATING;
-	
+
 	VBOXFS_NODE_UNLOCK(node);
 
 	/* Get a new vnode and associate it with our node. */
@@ -452,7 +452,7 @@ vfsnode_invalidate_stat_cache(struct vboxfs_node *np)
 static int
 vboxfs_close(struct vop_close_args *ap)
 {
-	
+
 	struct vnode *vp = ap->a_vp;
 	struct vboxfs_node *np;
 
@@ -491,11 +491,11 @@ vboxfs_getattr(struct vop_getattr_args *ap)
 
 	mode = 0;
 	vap->va_type = vp->v_type;
-	
+
 	vap->va_nlink = 1;		/* number of references to file */
 	vap->va_uid = mp->sf_uid;	/* owner user id */
 	vap->va_gid = mp->sf_gid;	/* owner group id */
-	vap->va_rdev = NODEV;		/* device the special file represents */ 
+	vap->va_rdev = NODEV;		/* device the special file represents */
 	vap->va_gen = VNOVAL;		/* generation number of file */
 	vap->va_flags = 0;		/* flags defined for file */
 	vap->va_filerev = 0;		/* file modification number */
@@ -561,7 +561,7 @@ done:
 static int
 vboxfs_setattr(struct vop_setattr_args *ap)
 {
-	
+
 	struct vnode 		*vp = ap->a_vp;
 	struct vattr 		*vap = ap->a_vap;
 	struct vboxfs_node	*np = VP_TO_VBOXFS_NODE(vp);
@@ -1141,7 +1141,7 @@ vboxfs_pathconf(struct vop_pathconf_args *ap)
 		*retval = NAME_MAX;
 		break;
 	case _PC_PATH_MAX:
-		*retval = PATH_MAX; 
+		*retval = PATH_MAX;
 		break;
 	default:
 		error = EINVAL;
@@ -1161,8 +1161,8 @@ vboxfs_ioctl(struct vop_ioctl_args *ap)
 
 /*
  * Lookup an entry in a directory and create a new vnode if found.
- */	
-static int 
+ */
+static int
 vboxfs_lookup(struct vop_cachedlookup_args /* {
 		struct vnodeop_desc *a_desc;
 		struct vnode *a_dvp;
@@ -1183,7 +1183,7 @@ vboxfs_lookup(struct vop_cachedlookup_args /* {
 	//long 	namelen;
 	ino_t 	id = 0;
 	int 	ltype, type, error = 0;
-	int 	lkflags = cnp->cn_lkflags;	
+	int 	lkflags = cnp->cn_lkflags;
 	char	*fullpath = NULL;
 
 	error = ENOENT;
@@ -1193,7 +1193,7 @@ vboxfs_lookup(struct vop_cachedlookup_args /* {
 		error = ENOENT;
 		if (error != 0)
 			goto out;
-		
+
 	} else if (cnp->cn_namelen == 1 && cnp->cn_nameptr[0] == '.') {
 		VREF(dvp);
 		*vpp = dvp;

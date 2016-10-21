@@ -34,7 +34,7 @@ vboxvfs_INCS          = \
 vboxvfs_SOURCES       = \
 	vboxvfs_vfsops.c \
 	vboxvfs_vnops.c \
-	vboxvfs_prov.c 
+	vboxvfs_prov.c
 vboxvfs_LIBS          = \
 	$(VBOX_LIB_VBGL_R0) \
 	$(VBOX_LIB_IPRT_GUEST_R0)

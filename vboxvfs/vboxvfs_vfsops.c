@@ -258,7 +258,7 @@ vboxfs_node_fini(void *mem, int size)
 static int
 vboxfs_mount(struct mount *mp)
 {
-	struct vboxfs_mnt *vboxfsmp = NULL; 
+	struct vboxfs_mnt *vboxfsmp = NULL;
 	struct vfsoptlist *opts = mp->mnt_optnew;
 	sfp_mount_t *handle = NULL;
 	int readonly = 0;
@@ -357,13 +357,13 @@ vboxfs_mount(struct mount *mp)
 /*
  * Unmount a shared folder.
  *
- * vboxfs_unmount umounts the mounted file system. It return 0 
+ * vboxfs_unmount umounts the mounted file system. It return 0
  * on sucess and any relevant errno on failure.
  */
 static int
 vboxfs_unmount(struct mount *mp, int mntflags)
 {
-	struct vboxfs_mnt *vboxfsmp; 
+	struct vboxfs_mnt *vboxfsmp;
 	struct thread *td;
 	int error;
 	int flags;
