@@ -159,6 +159,10 @@ MALLOC_DECLARE(M_VBOXVFS);
 #include <sys/mount.h>
 #include <sys/vnode.h> 
 #include <sys/_timespec.h>
+
+#if defined(RT_OS_FREEBSD) && defined(_KERNEL)
+# undef PVM /** XXX: For not conflict with PVM in sys/priority.h */
+#endif
 #include <VBox/VBoxGuestLibSharedFolders.h>
 
 #define	VBOXVFS_DEBUG(lvl, ...)	do {					\
