@@ -157,7 +157,7 @@ MALLOC_DECLARE(M_VBOXVFS);
 #endif /* !FREEBSD_STYLE */
 
 #include <sys/mount.h>
-#include <sys/vnode.h> 
+#include <sys/vnode.h>
 #include <sys/_timespec.h>
 
 #if defined(RT_OS_FREEBSD) && defined(_KERNEL)
@@ -400,7 +400,7 @@ extern int sfprov_get_mtime(sfp_mount_t *, char *, struct timespec *);
 extern int sfprov_get_ctime(sfp_mount_t *, char *, struct timespec *);
 extern int sfprov_get_attr(sfp_mount_t *, char *, sffs_stat_t *);
 extern int sfprov_set_attr(sfp_mount_t *, char *, mode_t,
-   struct timespec, struct timespec, struct timespec); 
+   struct timespec, struct timespec, struct timespec);
 extern int sfprov_set_size(sfp_mount_t *, char *, uint64_t);
 
 
@@ -428,7 +428,7 @@ extern int sfprov_symlink(sfp_mount_t *, char *linkname, char *target,
 #define SFFS_DIRENTS_OFF	(offsetof(sffs_dirents_t, sf_entries[0]))
 
 extern int sfprov_readdir(sfp_mount_t *mnt, char *path,
-    sffs_dirents_t **dirents); 
+    sffs_dirents_t **dirents);
 
 #endif  /* KERNEL */
 
