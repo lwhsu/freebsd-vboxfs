@@ -1,0 +1,39 @@
+# $Id$
+## @file
+# Sub-Makefile for mount_vboxvfs, the FreeBSD guest shared folder mount
+# utility.
+#
+
+#
+# SPDX-License-Identifier: GPL-3.0-only OR BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
+
+SUB_DEPTH = ../../../../..
+include $(KBUILD_PATH)/subheader.kmk
+
+ifneq ($(KBUILD_HOST),freebsd)
+ $(error "The FreeBSD guest additions can only be built on FreeBSD!")
+endif
+
+#
+# mount_vboxvfs - the userland mount program.  It only needs libc and
+# libutil (getmntopts(3)); the template is what the other guest additions
+# programs use and puts it in bin/additions/.
+#
+PROGRAMS += mount_vboxvfs
+mount_vboxvfs_TEMPLATE = VBoxGuestR3Exe
+mount_vboxvfs_SOURCES  = mount_vboxvfs.c
+mount_vboxvfs_LIBS     = util
+
+#
+# The manual page, installed next to the program so that the FreeBSD port
+# can pick it up from the same directory.
+#
+INSTALLS += mount_vboxvfs-man
+mount_vboxvfs-man_INST    = $(INST_ADDITIONS)
+mount_vboxvfs-man_MODE    = 0644
+mount_vboxvfs-man_SOURCES = mount_vboxvfs.8
+
+include $(FILE_KBUILD_SUB_FOOTER)

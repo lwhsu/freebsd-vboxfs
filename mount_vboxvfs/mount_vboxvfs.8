@@ -1,0 +1,188 @@
+.\"
+.\" SPDX-License-Identifier: GPL-3.0-only OR BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+.\"
+.Dd October 22, 2026
+.Dt MOUNT_VBOXVFS 8
+.Os
+.Sh NAME
+.Nm mount_vboxvfs
+.Nd mount a VirtualBox shared folder
+.Sh SYNOPSIS
+.Nm
+.Op Fl d
+.Op Fl r | Fl w
+.Op Fl o Ar options
+.Ar share
+.Ar node
+.Sh DESCRIPTION
+The
+.Nm
+utility attaches the VirtualBox shared folder named
+.Ar share
+to the directory
+.Ar node ,
+using the
+.Nm vboxvfs
+file system.
+A shared folder is a directory on the host that the VirtualBox hypervisor
+exports to a guest; it has to be defined in the settings of the virtual
+machine first, for example with
+.Bd -literal -offset indent
+VBoxManage sharedfolder add <vm> --name <share> --hostpath <directory>
+.Ed
+on the host.
+The guest additions kernel module
+.Nm vboxguest
+must be loaded; the
+.Nm vboxvfs
+module is loaded automatically.
+.Pp
+Files and directories on a shared folder belong to the host user that runs
+the virtual machine, and the host performs every operation with that user's
+permissions.
+The host does not report user or group identifiers, so inside the guest all
+files appear to be owned by the user and group given with the
+.Cm uid
+and
+.Cm gid
+options.
+By default the permission bits shown are the ones the host reports for each
+file; they can be overridden for the whole mount with
+.Cm file_mode
+and
+.Cm dir_mode .
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl d
+Print the options that would be passed to
+.Xr nmount 2
+and exit without mounting anything.
+This is a debugging aid.
+.It Fl r
+Mount the file system read-only, the same as
+.Fl o Cm ro .
+.It Fl w
+Mount the file system read-write
+.Pq the default ,
+the same as
+.Fl o Cm rw .
+.It Fl o Ar options
+Options are specified with a
+.Fl o
+flag followed by a comma separated string of options.
+See the
+.Xr mount 8
+man page for the generic options such as
+.Cm ro ,
+.Cm noatime ,
+.Cm noexec
+and
+.Cm nosuid ,
+which are passed through to the kernel.
+The following options are specific to
+.Nm vboxvfs :
+.Bl -tag -width "file_mode=mode"
+.It Cm uid Ns = Ns Ar user
+The owner of all files and directories on the file system, as a user name
+or a numeric user ID.
+The default is 0
+.Pq root .
+.It Cm gid Ns = Ns Ar group
+The group of all files and directories on the file system, as a group name
+or a numeric group ID.
+The default is 0
+.Pq wheel .
+.It Cm file_mode Ns = Ns Ar mode
+Show every regular file and symbolic link with the given octal permission
+bits instead of the mode reported by the host.
+The default of 0 means to use the host's mode.
+.It Cm dir_mode Ns = Ns Ar mode
+Show every directory with the given octal permission bits instead of the
+mode reported by the host.
+The default of 0 means to use the host's mode.
+.It Cm fmask Ns = Ns Ar mode
+Clear the given octal permission bits from the mode of every regular file
+and symbolic link.
+The default is 0.
+.It Cm dmask Ns = Ns Ar mode
+Clear the given octal permission bits from the mode of every directory.
+The default is 0.
+.It Cm ttl Ns = Ns Ar milliseconds
+How long cached file attributes stay valid before they are fetched from the
+host again.
+Changes made on the host become visible in the guest within this time.
+The default is 200; a value of 0 disables the cache.
+.El
+.El
+.Sh EXAMPLES
+Mount the shared folder
+.Dq share
+on
+.Pa /mnt/share ,
+with all files owned by the user and group
+.Dq alice :
+.Bd -literal -offset indent
+mount_vboxvfs -o uid=alice,gid=alice share /mnt/share
+.Ed
+.Pp
+The same through
+.Xr mount 8 ,
+read-only, with directories shown as mode 0755 and files as 0644:
+.Bd -literal -offset indent
+mount -t vboxvfs -o ro,dir_mode=0755,file_mode=0644 share /mnt/share
+.Ed
+.Pp
+An
+.Xr fstab 5
+entry that mounts the folder at boot.
+The
+.Cm late
+option defers the mount until after the guest additions have been started:
+.Bd -literal -offset indent
+share	/mnt/share	vboxvfs	rw,uid=1001,gid=1001,late	0	0
+.Ed
+.Sh SEE ALSO
+.Xr nmount 2 ,
+.Xr fstab 5 ,
+.Xr mount 8 ,
+.Xr umount 8
+.Pp
+.Lk https://www.virtualbox.org/manual/ "VirtualBox User Manual"
+.Sh HISTORY
+A
+.Nm
+utility first appeared in the
+.Fx
+Ports Collection in 2017 as part of the VirtualBox guest additions.
+This version is a rewrite from 2026.
+.Sh CAVEATS
+File locks taken with
+.Xr flock 2
+or
+.Xr fcntl 2
+are local to the guest; they do not lock the file on the host or in other
+guests.
+.Pp
+The shared folder protocol has no notion of hard links, device nodes,
+FIFOs, sockets, file flags, access control lists or extended attributes;
+operations that need them fail.
+The host clears the set-user-ID, set-group-ID and sticky bits and always
+keeps read permission for the owner.
+.Pp
+Creating symbolic links on a shared folder fails unless the host allows it
+for that folder:
+.Bd -literal -offset indent
+VBoxManage setextradata <vm> \\
+    VBoxInternal2/SharedFoldersEnableSymlinksCreate/<share> 1
+.Ed
+.Pp
+Changes made on the host side are only noticed when the cached attributes
+expire
+.Pq see the Cm ttl No option ;
+data written by the guest is sent to the host immediately.
+.Pp
+On a Windows host, a file that is open in the guest cannot be removed or
+renamed, and file names are not case sensitive.
