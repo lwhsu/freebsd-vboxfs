@@ -267,6 +267,7 @@ vboxvfs_open(struct vop_open_args *ap)
 {
 	struct vboxvfs_node *np;
 	struct vnode *vp;
+	uint64_t size;
 	int error;
 
 	vp = ap->a_vp;
@@ -278,14 +279,12 @@ vboxvfs_open(struct vop_open_args *ap)
 	error = vboxvfs_node_revalidate(np, true);
 	if (error != 0)
 		return (error);
-	if (vp->v_type == VREG) {
-		VBOXVFS_NODE_LOCK(np);
-		vnode_create_vobject(vp, np->vn_size, ap->a_td);
-		VBOXVFS_NODE_UNLOCK(np);
-	}
 	VBOXVFS_NODE_LOCK(np);
+	size = np->vn_size;
 	np->vn_opencnt++;
 	VBOXVFS_NODE_UNLOCK(np);
+	if (vp->v_type == VREG)
+		vnode_create_vobject(vp, size, ap->a_td);
 	return (0);
 }
 
