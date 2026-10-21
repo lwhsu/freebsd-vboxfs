@@ -1,46 +1,33 @@
-freebsd-vboxfs
-==============
+# freebsd-vboxfs
 
-To setup development environment quickly:
-```sh
-cd /usr/ports/emulators/virtualbox-ose-additions
-(optional) make config; unselect "X11"
-make all-depends-list | awk -F/ '{print $5}' > /tmp/vbox-addon-depends
-pkg install `cat /tmp/vbox-addon-depends`
-edit /tmp/vbox-addon-depends, remove/modify error entries from last command:
-  perl5.16 -> perl5
-  gcc-ecj45 -> gcc-ecj
-  delete indexinfo
-pkg install `cat /tmp/vbox-addon-depends`
-```
+A rewrite of the VirtualBox shared folder client for FreeBSD guests:
+the `vboxvfs` kernel module and the `mount_vboxvfs(8)` utility.
 
-There is a pre-generated list is at `misc/all-depends-list`, to install:
-```sh
-pkg install `cat misc/all-depends-list`
-```
+The code in this branch (`rewrite`) is new work, dual-licensed under
+`GPL-3.0-only OR BSD-2-Clause` (see `LICENSE`).  It does not derive from the
+2016 Solaris-based port that lives on the `master` branch and in the FreeBSD
+ports tree (`emulators/virtualbox-ose-additions-72`); that code is kept only
+for history.
 
-To build:
+## Layout
 
-```sh
-cp -R $(freebsd-vboxsf)/mount_vboxfs /usr/src/sbin
-cd /usr/src/sbin/mount_vboxfs && make depend all install
+| Directory        | Contents |
+|------------------|----------|
+| `vboxvfs/`       | kernel module sources (`bsd.kmod.mk` and kBuild builds) |
+| `mount_vboxvfs/` | `mount_vboxvfs(8)` and its manual page |
+| `ports/`         | scripts that turn this tree into FreeBSD ports patches |
+| `scripts/`       | development helpers: VM provisioning, sync to a VirtualBox WRKSRC, build |
+| `tests/`         | pjdfstest local patch, stress test drivers |
 
-cp $(freebsd-vboxsf)/patch-* /usr/ports/emulators/virtualbox-ose-additions/files
+## Status
 
-cd /usr/ports/emulators/virtualbox-ose-additions
-make patch
-rm -fr `make -V WRKSRC`/src/VBox/Additions/freebsd/vboxvfs
-cp -R $(freebsd-vboxsf)/vboxvfs `make -V WRKSRC`/src/VBox/Additions/freebsd
+Work in progress.  Design notes, environment setup and test results are kept
+in the companion repository
+<https://github.com/lwhsu/freebsd-vboxfs-worklog>.
 
-make
-```
+## Requirements
 
-To test: (currently does not fully work)
-```sh
-cd /usr/ports/emulators/virtualbox-ose-additions
-cd `make -V WRKSRC`
-kldload ./out/freebsd.amd64/release/bin/additions/vboxguest.ko
-kldload ./out/freebsd.amd64/release/bin/additions/vboxvfs.ko
-
-mount_vboxfs -w shared_folder_name /mnt
-```
+- FreeBSD 15.x or 16-CURRENT guest (amd64).
+- VirtualBox 7.2 sources (the module links against the guest ring-0
+  libraries built by the VirtualBox tree; the FreeBSD port provides them).
+- A VirtualBox host >= 6.1 for full functionality.
