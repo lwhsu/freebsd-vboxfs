@@ -1,0 +1,429 @@
+/*-
+ * SPDX-License-Identifier: GPL-3.0-only OR BSD-2-Clause
+ *
+ * Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+ */
+
+/*
+ * vboxvfs -- thin wrappers around the VirtualBox guest library's shared
+ * folder requests (VBoxGuestLibSharedFoldersInline.h): request allocation
+ * on the physical heap, path strings, error conversion and host feature
+ * detection.  This is the only file that includes the inline request
+ * header.
+ */
+
+#include "vboxvfs_internal.h"
+
+#include <sys/stat.h>
+
+#include <iprt/err.h>
+#include <VBox/err.h>
+#include <VBox/VBoxGuestLib.h>
+#include <VBox/VBoxGuestLibSharedFoldersInline.h>
+
+/*
+ * Required by VBoxGuestLibSharedFoldersInline.h: the HGCM client and the
+ * VMMDev feature flags, shared by all mounts.
+ */
+VBGLSFCLIENT g_SfClient;
+uint32_t g_fHostFeatures;
+
+static uint64_t vboxvfs_sffeatures;
+static uint32_t vboxvfs_sflastfn;
+static bool vboxvfs_connected;
+
+/*
+ * Convert an IPRT status code to an errno value.
+ */
+int
+vboxvfs_vrc2errno(int vrc)
+{
+
+	if (RT_SUCCESS(vrc))
+		return (0);
+	switch (vrc) {
+	case VERR_FILE_NOT_FOUND:
+	case VERR_PATH_NOT_FOUND:
+	case VERR_NOT_FOUND:
+	case VERR_INVALID_NAME:		/* bad name for the host file system */
+		return (ENOENT);
+	case VERR_ACCESS_DENIED:
+	case VERR_PERMISSION_DENIED:
+		return (EACCES);
+	case VERR_ALREADY_EXISTS:
+		return (EEXIST);
+	case VERR_DIR_NOT_EMPTY:
+		return (ENOTEMPTY);
+	case VERR_NOT_A_DIRECTORY:
+		return (ENOTDIR);
+	case VERR_IS_A_DIRECTORY:
+		return (EISDIR);
+	case VERR_WRITE_PROTECT:
+		return (EROFS);
+	case VERR_DISK_FULL:
+		return (ENOSPC);
+	case VERR_FILENAME_TOO_LONG:
+		return (ENAMETOOLONG);
+	case VERR_SHARING_VIOLATION:
+	case VERR_RESOURCE_BUSY:
+	case VERR_FILE_LOCK_VIOLATION:
+	case VERR_FILE_LOCK_FAILED:
+		return (EBUSY);
+	case VERR_TOO_MANY_OPEN_FILES:
+		return (ENFILE);
+	case VERR_INVALID_HANDLE:
+		return (EBADF);
+	case VERR_INVALID_PARAMETER:
+	case VERR_INVALID_POINTER:
+	case VERR_INVALID_FUNCTION:
+	case VERR_OUT_OF_RANGE:
+	case VERR_INVALID_UTF8_ENCODING:
+		return (EINVAL);
+	case VERR_NO_MEMORY:
+		return (ENOMEM);
+	case VERR_NOT_SUPPORTED:
+	case VERR_NOT_IMPLEMENTED:
+		return (EOPNOTSUPP);
+	case VERR_INTERRUPTED:
+		return (EINTR);
+	case VERR_TIMEOUT:
+		return (ETIMEDOUT);
+	case VERR_FILE_TOO_BIG:
+		return (EFBIG);
+	case VERR_NOT_SAME_DEVICE:
+		return (EXDEV);
+	case VERR_TOO_MANY_SYMLINKS:
+		return (ELOOP);
+	case VERR_BUFFER_OVERFLOW:
+		return (EOVERFLOW);
+	case VERR_HGCM_SERVICE_NOT_FOUND:
+		return (ENXIO);
+	case VERR_SEEK:
+	case VERR_EOF:
+	case VERR_NO_MORE_FILES:
+	case VERR_DEV_IO_ERROR:
+	case VERR_READ_ERROR:
+	case VERR_WRITE_ERROR:
+	case VERR_FILE_IO_ERROR:
+	default:
+		VBOXVFS_DPRINTF(VBOXVFS_DEBUG_ERR,
+		    "unmapped host status %d, returning EIO\n", vrc);
+		return (EIO);
+	}
+}
+
+void *
+vboxvfs_host_alloc(size_t size)
+{
+
+	return (VbglR0PhysHeapAlloc(size));
+}
+
+void
+vboxvfs_host_free(void *p)
+{
+
+	if (p != NULL)
+		VbglR0PhysHeapFree(p);
+}
+
+int
+vboxvfs_host_lastfn(void)
+{
+
+	return (vboxvfs_sflastfn);
+}
+
+uint32_t
+vboxvfs_host_features(void)
+{
+
+	return (g_fHostFeatures);
+}
+
+/*
+ * Connect to the shared folder service.  Called once at module load.
+ */
+int
+vboxvfs_host_init(void)
+{
+	int vrc;
+
+	vrc = VbglR0SfInit();
+	if (RT_FAILURE(vrc)) {
+		VBOXVFS_DPRINTF(VBOXVFS_DEBUG_ERR, "VbglR0SfInit: %d\n", vrc);
+		return (vboxvfs_vrc2errno(vrc));
+	}
+	vrc = VbglR0SfConnect(&g_SfClient);
+	if (RT_FAILURE(vrc)) {
+		VBOXVFS_DPRINTF(VBOXVFS_DEBUG_ERR, "VbglR0SfConnect: %d\n",
+		    vrc);
+		VbglR0SfTerm();
+		return (vboxvfs_vrc2errno(vrc));
+	}
+	vboxvfs_connected = true;
+
+	vrc = VbglR0QueryHostFeatures(&g_fHostFeatures);
+	if (RT_FAILURE(vrc)) {
+		VBOXVFS_DPRINTF(VBOXVFS_DEBUG_ERR,
+		    "VbglR0QueryHostFeatures: %d (ignored)\n", vrc);
+		g_fHostFeatures = 0;
+	}
+	/* Must come after the VMMDev query, it falls back on it. */
+	(void)VbglR0SfHostReqQueryFeaturesSimple(&vboxvfs_sffeatures,
+	    &vboxvfs_sflastfn);
+
+	vrc = VbglR0SfHostReqSetUtf8Simple();
+	if (RT_FAILURE(vrc)) {
+		VBOXVFS_DPRINTF(VBOXVFS_DEBUG_ERR, "SET_UTF8: %d\n", vrc);
+		vboxvfs_host_term();
+		return (vboxvfs_vrc2errno(vrc));
+	}
+	/* Report symbolic links instead of following them on the host. */
+	vrc = VbglR0SfHostReqSetSymlinksSimple();
+	if (RT_FAILURE(vrc))
+		printf("vboxvfs: host does not support showing symbolic "
+		    "links (%d)\n", vrc);
+	/* POSIX style error codes (ENOTDIR vs. ENOENT) from Windows hosts. */
+	if (vboxvfs_sflastfn >= SHFL_FN_SET_ERROR_STYLE)
+		(void)VbglR0SfHostReqSetErrorStyleSimple(kShflErrorStyle_Linux);
+
+	printf("vboxvfs: host features %#x, shared folder features %#jx, "
+	    "last function %u\n", g_fHostFeatures,
+	    (uintmax_t)vboxvfs_sffeatures, vboxvfs_sflastfn);
+	return (0);
+}
+
+void
+vboxvfs_host_term(void)
+{
+
+	if (vboxvfs_connected) {
+		VbglR0SfDisconnect(&g_SfClient);
+		vboxvfs_connected = false;
+	}
+	VbglR0SfTerm();
+}
+
+/*
+ * Fill in a SHFLSTRING from a path that is not necessarily NUL terminated.
+ */
+static void
+vboxvfs_host_setstring(SHFLSTRING *str, const char *path, size_t pathlen)
+{
+
+	str->u16Length = pathlen;
+	str->u16Size = pathlen + 1;
+	bcopy(path, str->String.ach, pathlen);
+	str->String.ach[pathlen] = '\0';
+}
+
+int
+vboxvfs_host_map(const char *share, SHFLROOT *rootp)
+{
+	SHFLSTRING *str;
+	size_t len;
+	int vrc;
+
+	len = strlen(share);
+	str = VbglR0PhysHeapAlloc(SHFLSTRING_HEADER_SIZE + len + 1);
+	if (str == NULL)
+		return (ENOMEM);
+	vboxvfs_host_setstring(str, share, len);
+	vrc = VbglR0SfHostReqMapFolderWithContigSimple(str,
+	    VbglR0PhysHeapGetPhysAddr(str), '/', true /* case sensitive */,
+	    rootp);
+	VbglR0PhysHeapFree(str);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "MAP_FOLDER \"%s\": %d root %u\n",
+	    share, vrc, *rootp);
+	if (vrc == VERR_FILE_NOT_FOUND || vrc == VERR_PATH_NOT_FOUND)
+		return (ENXIO);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+int
+vboxvfs_host_unmap(SHFLROOT root)
+{
+	int vrc;
+
+	vrc = VbglR0SfHostReqUnmapFolderSimple(root);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "UNMAP_FOLDER %u: %d\n", root, vrc);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+/*
+ * SHFL_FN_CREATE: open, create, mkdir or (with SHFL_CF_LOOKUP) just query
+ * an object.  On success *parms tells what happened; parms->Handle is
+ * SHFL_HANDLE_NIL when nothing was opened.
+ */
+int
+vboxvfs_host_create(struct vboxvfs_mount *vmp, const char *path,
+    size_t pathlen, uint32_t cflags, mode_t mode, SHFLCREATEPARMS *parms)
+{
+	VBOXSFCREATEREQ *req;
+	int vrc;
+
+	if (pathlen >= UINT16_MAX)
+		return (ENAMETOOLONG);
+	req = VbglR0PhysHeapAlloc(RT_UOFFSETOF(VBOXSFCREATEREQ,
+	    StrPath.String) + pathlen + 1);
+	if (req == NULL)
+		return (ENOMEM);
+	vboxvfs_host_setstring(&req->StrPath, path, pathlen);
+	RT_ZERO(req->CreateParms);
+	req->CreateParms.Handle = SHFL_HANDLE_NIL;
+	req->CreateParms.CreateFlags = cflags;
+	if ((cflags & SHFL_CF_LOOKUP) == 0) {
+		req->CreateParms.Info.Attr.fMode =
+		    ((cflags & SHFL_CF_DIRECTORY) ? RTFS_TYPE_DIRECTORY :
+		    RTFS_TYPE_FILE) | (mode & ALLPERMS);
+		req->CreateParms.Info.Attr.enmAdditional =
+		    SHFLFSOBJATTRADD_NOTHING;
+	}
+	vrc = VbglR0SfHostReqCreate(vmp->vm_root, req);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST,
+	    "CREATE \"%.*s\" flags %#x: %d result %d handle %#jx\n",
+	    (int)pathlen, path, cflags, vrc, (int)req->CreateParms.Result,
+	    (uintmax_t)req->CreateParms.Handle);
+	if (RT_SUCCESS(vrc))
+		*parms = req->CreateParms;
+	VbglR0PhysHeapFree(req);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+int
+vboxvfs_host_close(struct vboxvfs_mount *vmp, SHFLHANDLE handle)
+{
+	int vrc;
+
+	vrc = VbglR0SfHostReqCloseSimple(vmp->vm_root, handle);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "CLOSE %#jx: %d\n",
+	    (uintmax_t)handle, vrc);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+/*
+ * Query the attributes of a path without opening it.  ENOENT if it does not
+ * exist.
+ */
+int
+vboxvfs_host_lookup(struct vboxvfs_mount *vmp, const char *path,
+    size_t pathlen, SHFLFSOBJINFO *info)
+{
+	SHFLCREATEPARMS parms;
+	int error;
+
+	error = vboxvfs_host_create(vmp, path, pathlen, SHFL_CF_LOOKUP, 0,
+	    &parms);
+	if (error != 0)
+		return (error);
+	switch (parms.Result) {
+	case SHFL_FILE_EXISTS:
+		*info = parms.Info;
+		return (0);
+	case SHFL_FILE_NOT_FOUND:
+	case SHFL_PATH_NOT_FOUND:
+		return (ENOENT);
+	default:
+		VBOXVFS_DPRINTF(VBOXVFS_DEBUG_ERR,
+		    "lookup of \"%.*s\": unexpected result %d\n", (int)pathlen,
+		    path, (int)parms.Result);
+		return (EIO);
+	}
+}
+
+int
+vboxvfs_host_getinfo(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
+    SHFLFSOBJINFO *info)
+{
+	VBOXSFOBJINFOREQ *req;
+	int vrc;
+
+	req = VbglR0PhysHeapAlloc(sizeof(*req));
+	if (req == NULL)
+		return (ENOMEM);
+	vrc = VbglR0SfHostReqQueryObjInfo(vmp->vm_root, req, handle);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "QUERY_OBJ_INFO %#jx: %d\n",
+	    (uintmax_t)handle, vrc);
+	if (RT_SUCCESS(vrc))
+		*info = req->ObjInfo;
+	VbglR0PhysHeapFree(req);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+/*
+ * Set attributes through a handle: mode and times (zero time fields are
+ * left unchanged by the host).  *info is updated with what the host
+ * reports afterwards.
+ */
+int
+vboxvfs_host_setinfo(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
+    SHFLFSOBJINFO *info)
+{
+	VBOXSFOBJINFOREQ *req;
+	int vrc;
+
+	req = VbglR0PhysHeapAlloc(sizeof(*req));
+	if (req == NULL)
+		return (ENOMEM);
+	req->ObjInfo = *info;
+	vrc = VbglR0SfHostReqSetObjInfo(vmp->vm_root, req, handle);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "SET_OBJ_INFO %#jx mode %#o: %d\n",
+	    (uintmax_t)handle, info->Attr.fMode, vrc);
+	if (RT_SUCCESS(vrc))
+		*info = req->ObjInfo;
+	VbglR0PhysHeapFree(req);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+int
+vboxvfs_host_volinfo(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
+    SHFLVOLINFO *vi)
+{
+	VBOXSFVOLINFOREQ *req;
+	int vrc;
+
+	req = VbglR0PhysHeapAlloc(sizeof(*req));
+	if (req == NULL)
+		return (ENOMEM);
+	vrc = VbglR0SfHostReqQueryVolInfo(vmp->vm_root, req, handle);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "QUERY_VOL_INFO: %d\n", vrc);
+	if (RT_SUCCESS(vrc))
+		*vi = req->VolInfo;
+	VbglR0PhysHeapFree(req);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+/*
+ * Read a batch of directory entries into buf (which must come from
+ * vboxvfs_host_alloc()).  *nentries is the number of SHFLDIRINFO records in
+ * the buffer, *more whether the host has more.  End of directory is not an
+ * error: *nentries is 0 and *more false.
+ */
+int
+vboxvfs_host_list(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
+    uint32_t lflags, void *buf, uint32_t buflen, uint32_t *nentries,
+    bool *more)
+{
+	VBOXSFLISTDIRREQ *req;
+	int vrc;
+
+	req = VbglR0PhysHeapAlloc(sizeof(*req));
+	if (req == NULL)
+		return (ENOMEM);
+	vrc = VbglR0SfHostReqListDir(vmp->vm_root, req, handle, NULL, lflags,
+	    buf, buflen);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "LIST %#jx flags %#x: %d "
+	    "entries %u more %u\n", (uintmax_t)handle, lflags, vrc,
+	    req->Parms.c32Entries.u.value32, req->Parms.f32More.u.value32);
+	if (RT_SUCCESS(vrc)) {
+		*nentries = req->Parms.c32Entries.u.value32;
+		*more = req->Parms.f32More.u.value32 != 0;
+	} else if (vrc == VERR_NO_MORE_FILES) {
+		*nentries = 0;
+		*more = false;
+		vrc = VINF_SUCCESS;
+	}
+	VbglR0PhysHeapFree(req);
+	return (vboxvfs_vrc2errno(vrc));
+}

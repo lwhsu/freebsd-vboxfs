@@ -1,0 +1,20 @@
+# bsd.kmod.mk / bsd.prog.mk build products when built in-tree
+*.o
+*.ko
+*.ko.debug
+*.ko.full
+*.kld
+*.debug
+*.8.gz
+.depend*
+machine
+x86
+i386
+vnode_if.h
+vnode_if_newproto.h
+vnode_if_typedef.h
+export_syms
+opt_*.h
+/vboxvfs/VBoxGuestR0Lib.a
+/vboxvfs/RuntimeGuestR0.a
+/mount_vboxvfs/mount_vboxvfs
