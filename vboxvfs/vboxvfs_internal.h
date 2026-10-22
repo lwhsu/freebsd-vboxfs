@@ -255,6 +255,8 @@ vboxvfs_mount_issue(struct vboxvfs_mount *vmp, struct vboxvfs_issued *is)
 int	vboxvfs_node_get(struct vboxvfs_mount *vmp, struct vnode *dvp,
 	    const char *name, u_int namelen, const SHFLFSOBJINFO *info,
 	    const struct vboxvfs_issued *is, struct vnode **vpp);
+void	vboxvfs_node_issue_child(struct vboxvfs_node *dnp, const char *name,
+	    u_int namelen, struct vboxvfs_issued *is);
 void	vboxvfs_node_modstart(struct vboxvfs_node *np);
 void	vboxvfs_node_modend(struct vboxvfs_node *np);
 void	vboxvfs_node_free(struct vboxvfs_node *np);

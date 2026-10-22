@@ -167,7 +167,7 @@ vboxvfs_cachedlookup(struct vop_cachedlookup_args *ap)
 	    &path, &pathlen);
 	if (error != 0)
 		return (error);
-	vboxvfs_mount_issue(vmp, &is);
+	vboxvfs_node_issue_child(dnp, cnp->cn_nameptr, cnp->cn_namelen, &is);
 	error = vboxvfs_host_lookup(vmp, path, pathlen, &info);
 	vboxvfs_node_freepath(path);
 	if (error == ENOENT) {
@@ -816,7 +816,7 @@ vboxvfs_create(struct vop_create_args *ap)
 	    &path, &pathlen);
 	if (error != 0)
 		return (error);
-	vboxvfs_mount_issue(vmp, &is);
+	vboxvfs_node_issue_child(dnp, cnp->cn_nameptr, cnp->cn_namelen, &is);
 	error = vboxvfs_host_create(vmp, path, pathlen,
 	    SHFL_CF_ACT_CREATE_IF_NEW | SHFL_CF_ACT_FAIL_IF_EXISTS |
 	    SHFL_CF_ACCESS_READWRITE | SHFL_CF_ACCESS_DENYNONE, mode, &parms);
@@ -879,7 +879,7 @@ vboxvfs_mkdir(struct vop_mkdir_args *ap)
 	    &path, &pathlen);
 	if (error != 0)
 		return (error);
-	vboxvfs_mount_issue(vmp, &is);
+	vboxvfs_node_issue_child(dnp, cnp->cn_nameptr, cnp->cn_namelen, &is);
 	error = vboxvfs_host_create(vmp, path, pathlen,
 	    SHFL_CF_DIRECTORY | SHFL_CF_ACT_CREATE_IF_NEW |
 	    SHFL_CF_ACT_FAIL_IF_EXISTS | SHFL_CF_ACCESS_READ |
@@ -1181,7 +1181,7 @@ vboxvfs_symlink(struct vop_symlink_args *ap)
 	    &path, &pathlen);
 	if (error != 0)
 		return (error);
-	vboxvfs_mount_issue(vmp, &is);
+	vboxvfs_node_issue_child(dnp, cnp->cn_nameptr, cnp->cn_namelen, &is);
 	error = vboxvfs_host_symlink(vmp, path, pathlen, ap->a_target,
 	    strlen(ap->a_target), &info);
 	vboxvfs_node_freepath(path);

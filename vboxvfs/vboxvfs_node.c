@@ -272,20 +272,22 @@ vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info,
 	 */
 	trust = np->vn_inflight == 0 && (is == NULL ||
 	    (!is->vi_inflight && np->vn_modtime < is->vi_time));
+	if (!trust) {
+		/*
+		 * Leave the cache as it is, including its age: the next
+		 * revalidation asks the host again with the node known.
+		 */
+		VBOXVFS_NODE_UNLOCK(np);
+		return;
+	}
 	modified = (np->vn_flags & VBOXVFS_NODE_MODIFIED) != 0;
-	if (trust)
-		np->vn_flags &= ~VBOXVFS_NODE_MODIFIED;
+	np->vn_flags &= ~VBOXVFS_NODE_MODIFIED;
 	np->vn_info = *info;
 	np->vn_info_time = now;
-	if (trust)
-		np->vn_size = info->cbObject;
-	else
-		np->vn_info.cbObject = np->vn_size;
+	np->vn_size = info->cbObject;
 	newsize = np->vn_size;
 	np->vn_mtime_ns = info->ModificationTime.i64NanosecondsRelativeToUnixEpoch;
 	VBOXVFS_NODE_UNLOCK(np);
-	if (!trust)
-		return;
 	changed = oldsize != newsize || oldmtime !=
 	    info->ModificationTime.i64NanosecondsRelativeToUnixEpoch;
 	if (!changed)
@@ -492,6 +494,37 @@ vboxvfs_node_free(struct vboxvfs_node *np)
 	sx_destroy(&np->vn_dirsx);
 	mtx_destroy(&np->vn_mtx);
 	free(np, M_VBOXVFS);
+}
+
+/*
+ * Snapshot for a request about the child NAME of DNP (lookup, create):
+ * the time first, then whether the node for that name, if there is one
+ * already, has a write or size change in flight.  Used instead of the
+ * mount-wide count so that lookups stay useful while other files are
+ * being written.
+ */
+void
+vboxvfs_node_issue_child(struct vboxvfs_node *dnp, const char *name,
+    u_int namelen, struct vboxvfs_issued *is)
+{
+	struct vboxvfs_cmparg ca;
+	struct vboxvfs_node *np;
+	struct vnode *vp;
+
+	is->vi_time = sbinuptime();
+	is->vi_inflight = false;
+	ca.parent = dnp;
+	ca.name = name;
+	ca.namelen = namelen;
+	vfs_hash_ref(dnp->vn_vmp->vm_mp, vboxvfs_node_hash(dnp, name, namelen),
+	    curthread, &vp, vboxvfs_vnode_cmp, &ca);
+	if (vp != NULL) {
+		np = VTOVBOXVFS(vp);
+		VBOXVFS_NODE_LOCK(np);
+		is->vi_inflight = np->vn_inflight > 0;
+		VBOXVFS_NODE_UNLOCK(np);
+		vrele(vp);
+	}
 }
 
 /*
