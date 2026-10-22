@@ -172,6 +172,7 @@ struct vboxvfs_node {
  */
 int	vboxvfs_host_init(void);
 void	vboxvfs_host_term(void);
+void	vboxvfs_host_destroylog(void);
 int	vboxvfs_host_map(const char *share, SHFLROOT *rootp);
 int	vboxvfs_host_unmap(SHFLROOT root);
 int	vboxvfs_host_create(struct vboxvfs_mount *vmp, const char *path,

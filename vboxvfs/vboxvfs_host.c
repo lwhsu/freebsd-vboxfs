@@ -26,6 +26,7 @@
 #include <VBox/err.h>
 #include <VBox/VBoxGuestLib.h>
 #include <VBox/VBoxGuestLibSharedFoldersInline.h>
+#include <iprt/log.h>
 
 /*
  * Required by VBoxGuestLibSharedFoldersInline.h: the HGCM client and the
@@ -221,6 +222,22 @@ vboxvfs_host_term(void)
 		vboxvfs_connected = false;
 	}
 	VbglR0SfTerm();
+}
+
+/*
+ * The debug builds of the guest libraries create IPRT's default logger the
+ * first time one of their Log() statements runs (inside VbglR0SfInit()),
+ * and nothing in VbglR0SfTerm() destroys it, which shows up as "memory type
+ * iprtheap leaked memory" at kldunload.  Release builds never create one
+ * and both calls are no-ops then.  Called last, after the libraries are
+ * done logging.
+ */
+void
+vboxvfs_host_destroylog(void)
+{
+
+	RTLogDestroy(RTLogSetDefaultInstance(NULL));
+	RTLogDestroy(RTLogRelSetDefaultInstance(NULL));
 }
 
 /*

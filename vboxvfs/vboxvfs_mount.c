@@ -64,6 +64,7 @@ vboxvfs_uninit(struct vfsconf *vfsp __unused)
 	if (vboxvfs_host_ready)
 		vboxvfs_host_term();
 	vboxvfs_host_ready = false;
+	vboxvfs_host_destroylog();
 	sx_destroy(&vboxvfs_rename_lock);
 	return (0);
 }
