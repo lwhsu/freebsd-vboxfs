@@ -1,0 +1,45 @@
+emulators/virtualbox-ose-additions-72: rewrite the vboxvfs shared folder driver
+
+Replace the shared folder file system driver (vboxvfs.ko) and
+mount_vboxvfs(8) that the port carried as patches on top of the upstream
+stubs with a new implementation written from scratch for FreeBSD 15.x
+and 16-CURRENT.  The old driver dated from 2008 and was never adapted
+to the vnode and buffer cache interfaces of recent FreeBSD: it leaked
+the parent's vnode lock on ".." lookups, rename always failed with
+ENOENT, every file reported mode 0755, the kernel panicked at mount
+time on INVARIANTS kernels, and two pjdfstest cases locked the system
+up.
+
+The new driver follows the NFS and smbfs model:
+
+- a node cache keyed by (parent, name) with vfs_hash(9), inode numbers
+  from a hash of the path, and a name cache with a ttl (mount option
+  "ttl", default 200 ms) behind which host side changes are picked up;
+- read/write/mmap through the buffer cache with 64 KiB blocks, pages
+  handed to the host directly (HGCM page lists, no copying), write
+  through, and VOP_GETPAGES via vfs_bio_getpages(9) so that mmap and
+  read(2)/write(2) share the same pages;
+- rename, rmdir and remove integrated with the name cache
+  (cache_vop_rename(9), cache_vop_rmdir(9)), unlinked files stay usable
+  while open;
+- mode, times and ownership mapped to the host with the usual
+  uid/gid/file_mode/dir_mode/fmask/dmask mount options; symbolic links
+  are shown and created when the share allows it.
+
+Tested with pjdfstest on 15.1-RELEASE and 16-CURRENT (INVARIANTS,
+WITNESS): 171 of 238 test files pass completely; the remaining failures
+are limits of the shared folder protocol and host side policy (no
+device nodes, fifos, sockets or hard links, chown ignored, the host
+forcing the owner read bit and clearing setuid/setgid/sticky, path
+length limits), the same set the Linux vboxsf client fails.  fsx with
+mmap, a 10 minute mixed stress run (fsx, stress2, a copy/diff/git
+workload and concurrent changes from the host) and 2 hours of operation
+showed no panics, lockups or data mismatches.
+
+The sources are dual licensed GPL-3.0-only OR BSD-2-Clause and are
+maintained at https://github.com/lwhsu/freebsd-vboxfs; the patches in
+this commit are generated from that tree by ports/gen-ports-patch.sh.
+The man page is installed now, and pkg-message tells how to mount a
+share.
+
+PR:		238516
