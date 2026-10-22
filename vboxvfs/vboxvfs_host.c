@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 
 #include <vm/vm.h>
+#include <vm/pmap.h>
 #include <vm/vm_page.h>
 
 #include <iprt/err.h>
@@ -608,7 +609,16 @@ vboxvfs_host_xfer(struct vboxvfs_mount *vmp, SHFLHANDLE handle, off_t off,
 	bounce = NULL;
 	offpage = bufoff & PAGE_MASK;
 	npages = howmany(offpage + len, PAGE_SIZE);
-	if (bp->b_npages == 0) {
+	first = bufoff / PAGE_SIZE;
+	/*
+	 * The physical pages behind the buffer come from its kernel mapping
+	 * (pmap_kextract), not from b_pages[]: struct buf has members whose
+	 * presence depends on kernel options (BUF_TRACKING), so b_pages is
+	 * only reliable when the module is built with the running kernel's
+	 * exact option set, which a package cannot assume.  b_data is always
+	 * mapped here because the mount does not advertise unmapped buffers.
+	 */
+	if (bp->b_data == unmapped_buf) {
 		bounce = VbglR0PhysHeapAlloc(len);
 		if (bounce == NULL)
 			return (ENOMEM);
@@ -639,12 +649,13 @@ vboxvfs_host_xfer(struct vboxvfs_mount *vmp, SHFLHANDLE handle, off_t off,
 		for (i = 0; i < npages; i++)
 			pglst->aPages[i] = phys + (RTGCPHYS64)i * PAGE_SIZE;
 	} else {
-		first = bufoff / PAGE_SIZE;
-		KASSERT(first + npages <= (u_int)bp->b_npages,
-		    ("vboxvfs_host_xfer: %u+%u pages > %d", first, npages,
-		    bp->b_npages));
-		for (i = 0; i < npages; i++)
-			pglst->aPages[i] = VM_PAGE_TO_PHYS(bp->b_pages[first + i]);
+		for (i = 0; i < npages; i++) {
+			phys = pmap_kextract((vm_offset_t)bp->b_data +
+			    (first + i) * PAGE_SIZE);
+			KASSERT(phys != 0, ("vboxvfs_host_xfer: unmapped page %u "
+			    "of buffer %p", first + i, bp));
+			pglst->aPages[i] = phys;
+		}
 	}
 	if (write) {
 		vrc = VbglR0SfHostReqWritePgLst(vmp->vm_root, wreq, handle, off,

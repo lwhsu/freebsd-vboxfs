@@ -35,9 +35,13 @@ CFLAGS+=	-DIN_RING0 -DIN_RT_R0 -DIN_GUEST -DIN_GUEST_R0 -DVBOX_WITH_HGCM
 CFLAGS+=	-DDEBUG -DRT_STRICT
 .endif
 
-# Kernel debugging options matching the development kernel (GENERIC on
-# CURRENT); set WITHOUT_INVARIANTS for a release kernel.
-.if !defined(WITHOUT_INVARIANTS)
+# Kernel options.  The right way is KERNBUILDDIR pointing at a directory
+# with the running kernel's opt_global.h (scripts/dev/gen-opt-global.sh
+# makes one from kern.conftxt); kmod.mk then includes it.  Without it, the
+# debugging options of a CURRENT GENERIC kernel are assumed unless
+# WITHOUT_INVARIANTS is set.  Struct layouts that depend on options are
+# avoided in the sources, so a mismatch only affects assertions.
+.if !defined(KERNBUILDDIR) && !defined(WITHOUT_INVARIANTS)
 CFLAGS+=	-DINVARIANTS -DINVARIANT_SUPPORT -DDEBUG_VFS_LOCKS
 .endif
 
