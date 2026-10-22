@@ -245,22 +245,48 @@ vboxvfs_node_setinfo(struct vboxvfs_node *np, const SHFLFSOBJINFO *info)
  * shared or exclusive.
  */
 void
-vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info)
+vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info,
+    const struct vboxvfs_issued *is)
 {
 	struct vnode *vp;
-	uint64_t oldsize;
+	sbintime_t now;
+	uint64_t newsize, oldsize;
 	int64_t oldmtime;
-	bool changed, modified;
+	bool changed, modified, trust;
 
 	vp = VBOXVFSTOV(np);
+	now = sbinuptime();
+	if (now == 0)
+		now = 1;
 	VBOXVFS_NODE_LOCK(np);
 	oldsize = np->vn_size;
 	oldmtime = np->vn_mtime_ns;
+	/*
+	 * The answer is only meaningful for the size and for telling a
+	 * foreign change from our own if none of our writes or size changes
+	 * was in flight when the request was issued, started since, or is
+	 * still in flight now.  A lookup answered with the pre-write size and
+	 * applied once the write finished (it waits for the vnode lock the
+	 * writer holds) used to shrink the VM object under a shared mapping,
+	 * and the next access faulted with SIGBUS.
+	 */
+	trust = np->vn_inflight == 0 && (is == NULL ||
+	    (!is->vi_inflight && np->vn_modtime < is->vi_time));
 	modified = (np->vn_flags & VBOXVFS_NODE_MODIFIED) != 0;
-	np->vn_flags &= ~VBOXVFS_NODE_MODIFIED;
+	if (trust)
+		np->vn_flags &= ~VBOXVFS_NODE_MODIFIED;
+	np->vn_info = *info;
+	np->vn_info_time = now;
+	if (trust)
+		np->vn_size = info->cbObject;
+	else
+		np->vn_info.cbObject = np->vn_size;
+	newsize = np->vn_size;
+	np->vn_mtime_ns = info->ModificationTime.i64NanosecondsRelativeToUnixEpoch;
 	VBOXVFS_NODE_UNLOCK(np);
-	vboxvfs_node_setinfo(np, info);
-	changed = oldsize != info->cbObject || oldmtime !=
+	if (!trust)
+		return;
+	changed = oldsize != newsize || oldmtime !=
 	    info->ModificationTime.i64NanosecondsRelativeToUnixEpoch;
 	if (!changed)
 		return;
@@ -269,8 +295,40 @@ vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info)
 	else if (vp->v_type == VREG) {
 		if (!modified)
 			(void)vinvalbuf(vp, V_SAVE, 0, 0);
-		vboxvfs_node_setsize(vp, info->cbObject);
+		vboxvfs_node_setsize(vp, newsize);
 	}
+}
+
+/*
+ * Bracket a write or size change: host answers issued or completed while
+ * one is in flight are not trusted for the size (see vboxvfs_node_update()).
+ */
+void
+vboxvfs_node_modstart(struct vboxvfs_node *np)
+{
+
+	/*
+	 * The mount-wide count goes up before the start time is recorded, and
+	 * the snapshots in vboxvfs_{node,mount}_issue() take the time before
+	 * they read the counts: a request that sees "nothing in flight" was
+	 * then issued either before this modification started (its start time
+	 * is later than the request) or after it ended.
+	 */
+	atomic_add_int(&np->vn_vmp->vm_inflight, 1);
+	VBOXVFS_NODE_LOCK(np);
+	np->vn_inflight++;
+	np->vn_modtime = sbinuptime();
+	VBOXVFS_NODE_UNLOCK(np);
+}
+
+void
+vboxvfs_node_modend(struct vboxvfs_node *np)
+{
+
+	VBOXVFS_NODE_LOCK(np);
+	np->vn_inflight--;
+	VBOXVFS_NODE_UNLOCK(np);
+	atomic_subtract_int(&np->vn_vmp->vm_inflight, 1);
 }
 
 void
@@ -295,6 +353,7 @@ vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force)
 	struct vboxvfs_mount *vmp;
 	struct vnode *vp;
 	SHFLFSOBJINFO info;
+	struct vboxvfs_issued is;
 	SHFLHANDLE handle;
 	char *path;
 	size_t pathlen;
@@ -313,6 +372,7 @@ vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force)
 	VBOXVFS_NODE_UNLOCK(np);
 	if (np->vn_flags & VBOXVFS_NODE_ROOT)
 		handle = vmp->vm_roothandle;
+	vboxvfs_node_issue(np, &is);
 
 	if (handle != SHFL_HANDLE_NIL) {
 		error = vboxvfs_host_getinfo(vmp, handle, &info);
@@ -340,7 +400,7 @@ vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force)
 		return (ESTALE);
 	}
 
-	vboxvfs_node_update(np, &info);
+	vboxvfs_node_update(np, &info, &is);
 	return (0);
 }
 
@@ -351,6 +411,7 @@ int
 vboxvfs_node_opendir(struct vboxvfs_node *np, SHFLHANDLE *handlep)
 {
 	SHFLCREATEPARMS parms;
+	struct vboxvfs_issued is;
 	char *path;
 	size_t pathlen;
 	int error;
@@ -358,6 +419,7 @@ vboxvfs_node_opendir(struct vboxvfs_node *np, SHFLHANDLE *handlep)
 	error = vboxvfs_node_path(np, &path, &pathlen);
 	if (error != 0)
 		return (error);
+	vboxvfs_node_issue(np, &is);
 	error = vboxvfs_host_create(np->vn_vmp, path, pathlen,
 	    VBOXVFS_CREATE_DIR_RO, 0, &parms);
 	vboxvfs_node_freepath(path);
@@ -375,7 +437,7 @@ vboxvfs_node_opendir(struct vboxvfs_node *np, SHFLHANDLE *handlep)
 			return (EIO);
 		}
 	}
-	vboxvfs_node_update(np, &parms.Info);
+	vboxvfs_node_update(np, &parms.Info, &is);
 	*handlep = parms.Handle;
 	return (0);
 }
@@ -441,7 +503,7 @@ vboxvfs_node_free(struct vboxvfs_node *np)
 int
 vboxvfs_node_get(struct vboxvfs_mount *vmp, struct vnode *dvp,
     const char *name, u_int namelen, const SHFLFSOBJINFO *info,
-    struct vnode **vpp)
+    const struct vboxvfs_issued *is, struct vnode **vpp)
 {
 	struct mount *mp;
 	struct thread *td;
@@ -471,7 +533,7 @@ vboxvfs_node_get(struct vboxvfs_mount *vmp, struct vnode *dvp,
 		if (info == NULL)
 			return (0);
 		if (vboxvfs_mode2type(info->Attr.fMode) == (*vpp)->v_type) {
-			vboxvfs_node_update(np, info);
+			vboxvfs_node_update(np, info, is);
 			VBOXVFS_NODE_LOCK(np);
 			np->vn_flags &= ~VBOXVFS_NODE_STALE;
 			VBOXVFS_NODE_UNLOCK(np);
@@ -589,6 +651,7 @@ vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
 	struct vboxvfs_mount *vmp;
 	struct vnode *vp;
 	SHFLCREATEPARMS parms;
+	struct vboxvfs_issued is;
 	SHFLHANDLE old;
 	char *path;
 	size_t pathlen;
@@ -619,6 +682,7 @@ vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
 	error = vboxvfs_node_path(np, &path, &pathlen);
 	if (error != 0)
 		return (error);
+	vboxvfs_node_issue(np, &is);
 	error = vboxvfs_host_create(vmp, path, pathlen, cflags, 0, &parms);
 	vboxvfs_node_freepath(path);
 	if (error != 0)
@@ -635,7 +699,7 @@ vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
 			return (EIO);
 		}
 	}
-	vboxvfs_node_update(np, &parms.Info);
+	vboxvfs_node_update(np, &parms.Info, &is);
 
 	VBOXVFS_NODE_LOCK(np);
 	if (np->vn_handle != SHFL_HANDLE_NIL &&
@@ -670,6 +734,7 @@ vboxvfs_node_attrhandle(struct vboxvfs_node *np, SHFLHANDLE *handlep,
 	struct vboxvfs_mount *vmp;
 	struct vnode *vp;
 	SHFLCREATEPARMS parms;
+	struct vboxvfs_issued is;
 	char *path;
 	size_t pathlen;
 	uint32_t cflags;
@@ -695,6 +760,7 @@ vboxvfs_node_attrhandle(struct vboxvfs_node *np, SHFLHANDLE *handlep,
 	error = vboxvfs_node_path(np, &path, &pathlen);
 	if (error != 0)
 		return (error);
+	vboxvfs_node_issue(np, &is);
 	error = vboxvfs_host_create(vmp, path, pathlen, cflags, 0, &parms);
 	vboxvfs_node_freepath(path);
 	if (error != 0)
@@ -711,7 +777,7 @@ vboxvfs_node_attrhandle(struct vboxvfs_node *np, SHFLHANDLE *handlep,
 			return (EIO);
 		}
 	}
-	vboxvfs_node_update(np, &parms.Info);
+	vboxvfs_node_update(np, &parms.Info, &is);
 	*handlep = parms.Handle;
 	*tmpp = true;
 	return (0);

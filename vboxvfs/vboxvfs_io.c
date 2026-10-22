@@ -250,6 +250,12 @@ vboxvfs_write(struct vop_write_args *ap)
 			return (error);
 	}
 
+	/*
+	 * Attributes the host reports while this write is in flight may predate
+	 * it; vboxvfs_node_update() must not shrink the file or drop pages on
+	 * their account (a page in a shared mapping would fault with SIGBUS).
+	 */
+	vboxvfs_node_modstart(np);
 	biosize = vmp->vm_biosize;
 	error = 0;
 	do {
@@ -359,6 +365,7 @@ vboxvfs_write(struct vop_write_args *ap)
 			error = error1;
 	} while (error == 0 && uio->uio_resid > 0);
 
+	vboxvfs_node_modend(np);
 	/* The host's mtime has changed; the next getattr fetches it. */
 	vboxvfs_node_invalattr(np);
 	return (error);

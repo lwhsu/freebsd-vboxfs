@@ -93,6 +93,8 @@ struct vboxvfs_mount {
 	sbintime_t		 vm_ttl;	/* attribute cache lifetime */
 	int			 vm_ttl_ms;
 	u_int			 vm_biosize;	/* buffer cache block size */
+	volatile u_int		 vm_inflight;	/* writes/size changes in flight,
+					 * whole mount (atomic) */
 	bool			 vm_hostro;	/* host says read-only share */
 	uint32_t		 vm_namemax;	/* host's max name component */
 	char			*vm_share;	/* share name */
@@ -115,6 +117,10 @@ struct vboxvfs_node {
 	u_int			 vn_namelen;	/* (v) */
 	ino_t			 vn_ino;	/* (c) see vboxvfs_node_ino() */
 	u_int			 vn_flags;	/* (m) VBOXVFS_NODE_* */
+	int			 vn_inflight;	/* (m) writes and size changes in
+					 * progress; host attributes may
+					 * predate them while > 0 */
+	sbintime_t		 vn_modtime;	/* (m) when the last of them started */
 
 	/* Host handle. */
 	SHFLHANDLE		 vn_handle;	/* (m) SHFL_HANDLE_NIL if none */
@@ -215,9 +221,42 @@ uint32_t vboxvfs_host_features(void);
 /*
  * vboxvfs_node.c -- node cache.
  */
+/*
+ * When a host request that reports attributes was issued, and whether one
+ * of our own modifications (write, size change) was in flight then: such
+ * an answer may predate the modification and must not move the size or
+ * drop cached pages.  Per node where the node is known before the request,
+ * mount-wide (any node) for lookups.
+ */
+struct vboxvfs_issued {
+	sbintime_t	vi_time;
+	bool		vi_inflight;
+};
+
+/* The time first, then the counts: see vboxvfs_node_modstart(). */
+static inline void
+vboxvfs_node_issue(struct vboxvfs_node *np, struct vboxvfs_issued *is)
+{
+
+	is->vi_time = sbinuptime();
+	VBOXVFS_NODE_LOCK(np);
+	is->vi_inflight = np->vn_inflight > 0;
+	VBOXVFS_NODE_UNLOCK(np);
+}
+
+static inline void
+vboxvfs_mount_issue(struct vboxvfs_mount *vmp, struct vboxvfs_issued *is)
+{
+
+	is->vi_time = sbinuptime();
+	is->vi_inflight = atomic_load_int(&vmp->vm_inflight) > 0;
+}
+
 int	vboxvfs_node_get(struct vboxvfs_mount *vmp, struct vnode *dvp,
 	    const char *name, u_int namelen, const SHFLFSOBJINFO *info,
-	    struct vnode **vpp);
+	    const struct vboxvfs_issued *is, struct vnode **vpp);
+void	vboxvfs_node_modstart(struct vboxvfs_node *np);
+void	vboxvfs_node_modend(struct vboxvfs_node *np);
 void	vboxvfs_node_free(struct vboxvfs_node *np);
 int	vboxvfs_node_path(struct vboxvfs_node *np, char **pathp,
 	    size_t *lenp);
@@ -233,7 +272,8 @@ u_int	vboxvfs_node_hash(const struct vboxvfs_node *dnp, const char *name,
 	    u_int namelen);
 void	vboxvfs_node_setinfo(struct vboxvfs_node *np,
 	    const SHFLFSOBJINFO *info);
-void	vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info);
+void	vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info,
+	    const struct vboxvfs_issued *is);
 int	vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force);
 void	vboxvfs_node_invalattr(struct vboxvfs_node *np);
 void	vboxvfs_node_setsize(struct vnode *vp, uint64_t nsize);

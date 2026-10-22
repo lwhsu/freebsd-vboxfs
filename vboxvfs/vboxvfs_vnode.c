@@ -118,6 +118,7 @@ vboxvfs_cachedlookup(struct vop_cachedlookup_args *ap)
 	struct vboxvfs_mount *vmp;
 	struct vboxvfs_node *dnp;
 	struct vnode *dvp, *vp;
+	struct vboxvfs_issued is;
 	SHFLFSOBJINFO info;
 	char *path;
 	size_t pathlen;
@@ -166,6 +167,7 @@ vboxvfs_cachedlookup(struct vop_cachedlookup_args *ap)
 	    &path, &pathlen);
 	if (error != 0)
 		return (error);
+	vboxvfs_mount_issue(vmp, &is);
 	error = vboxvfs_host_lookup(vmp, path, pathlen, &info);
 	vboxvfs_node_freepath(path);
 	if (error == ENOENT) {
@@ -191,7 +193,7 @@ vboxvfs_cachedlookup(struct vop_cachedlookup_args *ap)
 			return (error);
 	}
 	error = vboxvfs_node_get(vmp, dvp, cnp->cn_nameptr, cnp->cn_namelen,
-	    &info, &vp);
+	    &info, &is, &vp);
 	if (error != 0)
 		return (error);
 	KASSERT((cnp->cn_lkflags & LK_TYPE_MASK) == LK_EXCLUSIVE,
@@ -793,6 +795,7 @@ vboxvfs_create(struct vop_create_args *ap)
 	struct vboxvfs_mount *vmp;
 	struct vboxvfs_node *dnp, *np;
 	struct vnode *dvp, *vp;
+	struct vboxvfs_issued is;
 	SHFLCREATEPARMS parms;
 	char *path;
 	size_t pathlen;
@@ -813,6 +816,7 @@ vboxvfs_create(struct vop_create_args *ap)
 	    &path, &pathlen);
 	if (error != 0)
 		return (error);
+	vboxvfs_mount_issue(vmp, &is);
 	error = vboxvfs_host_create(vmp, path, pathlen,
 	    SHFL_CF_ACT_CREATE_IF_NEW | SHFL_CF_ACT_FAIL_IF_EXISTS |
 	    SHFL_CF_ACCESS_READWRITE | SHFL_CF_ACCESS_DENYNONE, mode, &parms);
@@ -827,7 +831,7 @@ vboxvfs_create(struct vop_create_args *ap)
 		    &parms.Info);
 
 	error = vboxvfs_node_get(vmp, dvp, cnp->cn_nameptr, cnp->cn_namelen,
-	    &parms.Info, &vp);
+	    &parms.Info, &is, &vp);
 	if (error != 0) {
 		(void)vboxvfs_host_close(vmp, parms.Handle);
 		return (error);
@@ -856,6 +860,7 @@ vboxvfs_mkdir(struct vop_mkdir_args *ap)
 	struct vboxvfs_mount *vmp;
 	struct vboxvfs_node *dnp;
 	struct vnode *dvp, *vp;
+	struct vboxvfs_issued is;
 	SHFLCREATEPARMS parms;
 	char *path;
 	size_t pathlen;
@@ -874,6 +879,7 @@ vboxvfs_mkdir(struct vop_mkdir_args *ap)
 	    &path, &pathlen);
 	if (error != 0)
 		return (error);
+	vboxvfs_mount_issue(vmp, &is);
 	error = vboxvfs_host_create(vmp, path, pathlen,
 	    SHFL_CF_DIRECTORY | SHFL_CF_ACT_CREATE_IF_NEW |
 	    SHFL_CF_ACT_FAIL_IF_EXISTS | SHFL_CF_ACCESS_READ |
@@ -891,7 +897,7 @@ vboxvfs_mkdir(struct vop_mkdir_args *ap)
 	(void)vboxvfs_host_close(vmp, parms.Handle);
 
 	error = vboxvfs_node_get(vmp, dvp, cnp->cn_nameptr, cnp->cn_namelen,
-	    &parms.Info, &vp);
+	    &parms.Info, &is, &vp);
 	if (error != 0)
 		return (error);
 	if (cnp->cn_flags & MAKEENTRY)
@@ -1157,6 +1163,7 @@ vboxvfs_symlink(struct vop_symlink_args *ap)
 	struct vboxvfs_mount *vmp;
 	struct vboxvfs_node *dnp;
 	struct vnode *dvp, *vp;
+	struct vboxvfs_issued is;
 	SHFLFSOBJINFO info;
 	char *path;
 	size_t pathlen;
@@ -1174,6 +1181,7 @@ vboxvfs_symlink(struct vop_symlink_args *ap)
 	    &path, &pathlen);
 	if (error != 0)
 		return (error);
+	vboxvfs_mount_issue(vmp, &is);
 	error = vboxvfs_host_symlink(vmp, path, pathlen, ap->a_target,
 	    strlen(ap->a_target), &info);
 	vboxvfs_node_freepath(path);
@@ -1193,7 +1201,7 @@ vboxvfs_symlink(struct vop_symlink_args *ap)
 	}
 	vboxvfs_node_invalattr(dnp);
 	error = vboxvfs_node_get(vmp, dvp, cnp->cn_nameptr, cnp->cn_namelen,
-	    &info, &vp);
+	    &info, &is, &vp);
 	if (error != 0)
 		return (error);
 	*ap->a_vpp = vp;
@@ -1285,15 +1293,18 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_WRITE, &handle);
 		if (error != 0)
 			return (error);
+		vboxvfs_node_modstart(np);
 		error = vboxvfs_host_setsize(vmp, handle, vap->va_size);
-		if (error != 0)
-			return (error);
 		VBOXVFS_NODE_LOCK(np);
-		oldsize = np->vn_size;
-		np->vn_size = vap->va_size;
-		np->vn_flags |= VBOXVFS_NODE_MODIFIED;
+		if (error == 0) {
+			oldsize = np->vn_size;
+			np->vn_size = vap->va_size;
+			np->vn_flags |= VBOXVFS_NODE_MODIFIED;
+		}
 		VBOXVFS_NODE_UNLOCK(np);
-		error = vboxvfs_truncate(vp, oldsize, vap->va_size);
+		if (error == 0)
+			error = vboxvfs_truncate(vp, oldsize, vap->va_size);
+		vboxvfs_node_modend(np);
 		vboxvfs_node_invalattr(np);
 		if (error != 0)
 			return (error);

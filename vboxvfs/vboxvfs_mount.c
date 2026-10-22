@@ -248,7 +248,7 @@ vboxvfs_mount(struct mount *mp)
 	vfs_mountedfrom(mp, from);
 	mp->mnt_stat.f_iosize = vmp->vm_biosize;
 
-	error = vboxvfs_node_get(vmp, NULL, "", 0, &parms.Info, &vp);
+	error = vboxvfs_node_get(vmp, NULL, "", 0, &parms.Info, NULL, &vp);
 	if (error != 0) {
 		mp->mnt_data = NULL;
 		goto fail;
