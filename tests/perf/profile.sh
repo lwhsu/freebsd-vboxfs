@@ -10,7 +10,7 @@ mkdir -p "$DIR" "$OUTDIR"
 run() {	# $1 = name, $2 = shell command
 	name=$1; shift
 	echo "== $name"
-	dtrace -s "$HERE/hostreqs.d" -c "sh -c '$*'" > "$OUTDIR/$name.dtrace" 2>"$OUTDIR/$name.err"
+	dtrace -Z -s "$HERE/hostreqs.d" -c "sh -c '$*'" > "$OUTDIR/$name.dtrace" 2>"$OUTDIR/$name.err"
 	grep -A20 '== host requests ==' "$OUTDIR/$name.dtrace" | grep -vE '^$|==' | awk '{ printf "   %-22s %s\n", $1, $2 }'
 	grep -A3 '== bytes ==' "$OUTDIR/$name.dtrace" | grep -E 'read|write' | sed 's/^/   /'
 }
