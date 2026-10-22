@@ -67,7 +67,8 @@ $VBOXMANAGE modifyvm "$VM" --cpus "$CPUS" --memory "$MEM" --vram 16 \
     --audio-enabled off --usb-ohci off --mouse ps2 \
     --nic1 nat --nat-pf1 "ssh,tcp,127.0.0.1,$PORT,,22" --nat-localhostreachable1 on \
     --uart1 0x3F8 4 --uart-mode1 file "$VM_DIR/$VM-console.log"
-$VBOXMANAGE storagectl "$VM" --name SATA --add sata --controller IntelAhci --portcount 4
+$VBOXMANAGE storagectl "$VM" --name SATA --add sata --controller IntelAhci --portcount 4 \
+    --hostiocache on
 $VBOXMANAGE storageattach "$VM" --storagectl SATA --port 0 --device 0 --type hdd --medium "$VDI"
 if [ -n "$SEED" ]; then
 	$VBOXMANAGE storageattach "$VM" --storagectl SATA --port 1 --device 0 \
