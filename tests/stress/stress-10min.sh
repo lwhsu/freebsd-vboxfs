@@ -34,7 +34,7 @@ n=$(mount -t vboxvfs | grep -c " on $MNT ")
 for t in creat mkdir rename dirrename rw mmap fts symlink openat; do
 	[ -x "$STRESS2/testcases/$t/$t" ] || { echo "no stress2 binary $STRESS2/testcases/$t/$t" >&2; exit 2; }
 done
-W=$MNT/stress-work-$TAG; X=$X-$TAG; CH=$MNT/churn-$TAG
+W=$MNT/stress-work-$TAG; X=$MNT/stressX-$TAG; CH=$MNT/churn-$TAG
 rm -rf "$W" "$X" 2>/dev/null; mkdir -p "$W" "$X" "$CH" || exit 2
 ln -s /nonexistent "$W/probe-symlink" 2>/dev/null && rm "$W/probe-symlink" && symlinks=yes || symlinks=no
 
