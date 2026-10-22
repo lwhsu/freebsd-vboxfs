@@ -55,6 +55,7 @@ struct vop_vector vboxvfs_vnodeops = {
 	.vop_delayed_setsize =	vboxvfs_delayed_setsize,
 	.vop_fsync =		vboxvfs_fsync,
 	.vop_getattr =		vboxvfs_getattr,
+	.vop_getpages =		vboxvfs_getpages,
 	.vop_inactive =		vboxvfs_inactive,
 	.vop_lookup =		vboxvfs_lookup,
 	.vop_mkdir =		vboxvfs_mkdir,

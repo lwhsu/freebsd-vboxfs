@@ -118,10 +118,19 @@ vboxvfs_doio(struct vnode *vp, struct buf *bp)
 int
 vboxvfs_strategy(struct vop_strategy_args *ap)
 {
+	struct vnode *vp;
 	struct buf *bp;
 
+	vp = ap->a_vp;
 	bp = ap->a_bp;
-	if (ap->a_vp->v_type != VREG) {
+	/*
+	 * Buffers from bread() (vfs_bio_getpages) still carry the logical
+	 * block number; translate it the way vop_stdbmap() does.
+	 */
+	if (bp->b_blkno == bp->b_lblkno)
+		bp->b_blkno = bp->b_lblkno *
+		    (vp->v_mount->mnt_stat.f_iosize / DEV_BSIZE);
+	if (vp->v_type != VREG) {
 		bp->b_ioflags |= BIO_ERROR;
 		bp->b_error = EOPNOTSUPP;
 		bufdone(bp);
@@ -375,3 +384,45 @@ vboxvfs_fsync(struct vop_fsync_args *ap)
 		error = vboxvfs_host_flush(np->vn_vmp, handle);
 	return (error);
 }
+
+/*
+ * Page-in through the buffer cache (vfs_bio_getpages(), as ufs, ext2fs
+ * and msdosfs do).  vnode_pager_generic_getpages() cannot be used with a
+ * 64 KiB block size, and going through the buffers keeps mmap and
+ * read(2)/write(2) on the very same pages.
+ */
+static daddr_t
+vboxvfs_gbp_getblkno(struct vnode *vp, vm_ooffset_t off)
+{
+
+	return (off / VTOVBOXVFS(vp)->vn_vmp->vm_biosize);
+}
+
+static int
+vboxvfs_gbp_getblksz(struct vnode *vp, daddr_t lbn, long *sz)
+{
+	struct vboxvfs_node *np;
+	off_t nsize;
+	long biosize;
+
+	np = VTOVBOXVFS(vp);
+	biosize = np->vn_vmp->vm_biosize;
+	VBOXVFS_NODE_LOCK(np);
+	nsize = np->vn_size;
+	VBOXVFS_NODE_UNLOCK(np);
+	/* The last block of the file is as long as the data in it. */
+	if ((off_t)(lbn + 1) * biosize > nsize && nsize > (off_t)lbn * biosize)
+		*sz = nsize - (off_t)lbn * biosize;
+	else
+		*sz = biosize;
+	return (0);
+}
+
+int
+vboxvfs_getpages(struct vop_getpages_args *ap)
+{
+
+	return (vfs_bio_getpages(ap->a_vp, ap->a_m, ap->a_count, ap->a_rbehind,
+	    ap->a_rahead, vboxvfs_gbp_getblkno, vboxvfs_gbp_getblksz));
+}
+

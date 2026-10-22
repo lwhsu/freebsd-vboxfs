@@ -260,6 +260,7 @@ extern struct vop_vector vboxvfs_vnodeops;
 vop_read_t	vboxvfs_read;
 vop_write_t	vboxvfs_write;
 vop_fsync_t	vboxvfs_fsync;
+vop_getpages_t	vboxvfs_getpages;
 vop_strategy_t	vboxvfs_strategy;
 
 /*
