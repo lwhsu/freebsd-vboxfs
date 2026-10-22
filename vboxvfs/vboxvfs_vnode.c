@@ -21,8 +21,7 @@
 #include <sys/unistd.h>
 
 #include <vm/vm.h>
-#include <vm/vm_object.h>
-#include <vm/vnode_pager.h>
+#include <vm/vm_extern.h>
 
 static vop_access_t	vboxvfs_access;
 static vop_cachedlookup_t vboxvfs_cachedlookup;
