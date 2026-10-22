@@ -220,7 +220,7 @@ vboxvfs_node_setinfo(struct vboxvfs_node *np, const SHFLFSOBJINFO *info)
 {
 	sbintime_t now;
 
-	now = sbinuptime();
+	now = getsbinuptime();
 	if (now == 0)
 		now = 1;
 	VBOXVFS_NODE_LOCK(np);
@@ -255,7 +255,7 @@ vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info,
 	bool changed, modified, trust;
 
 	vp = VBOXVFSTOV(np);
-	now = sbinuptime();
+	now = getsbinuptime();
 	if (now == 0)
 		now = 1;
 	VBOXVFS_NODE_LOCK(np);
@@ -292,9 +292,10 @@ vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info,
 	    info->ModificationTime.i64NanosecondsRelativeToUnixEpoch;
 	if (!changed)
 		return;
-	if (vp->v_type == VDIR)
-		cache_purge(vp);
-	else if (vp->v_type == VREG) {
+	if (vp->v_type == VDIR) {
+		if (!modified)
+			cache_purge(vp);
+	} else if (vp->v_type == VREG) {
 		if (!modified)
 			(void)vinvalbuf(vp, V_SAVE, 0, 0);
 		vboxvfs_node_setsize(vp, newsize);
@@ -343,6 +344,32 @@ vboxvfs_node_invalattr(struct vboxvfs_node *np)
 }
 
 /*
+ * We changed the directory ourselves (created, removed or renamed an
+ * entry): bump its cached times so that stat(2) shows the change and mark
+ * it modified so that the next refresh adopts the host's values without
+ * purging the name cache, which only a foreign change warrants.  Keeping
+ * the attributes fresh instead of invalidating them spares a lookup of the
+ * directory on the host, and the loss of its name cache, at the next lookup
+ * in it; with tar(1) extracting a tree that was more than half of all the
+ * host requests.
+ */
+void
+vboxvfs_node_dirchanged(struct vboxvfs_node *dnp)
+{
+	struct timespec ts;
+	int64_t ns;
+
+	vfs_timestamp(&ts);
+	ns = (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+	VBOXVFS_NODE_LOCK(dnp);
+	dnp->vn_flags |= VBOXVFS_NODE_MODIFIED;
+	dnp->vn_info.ModificationTime.i64NanosecondsRelativeToUnixEpoch = ns;
+	dnp->vn_info.ChangeTime.i64NanosecondsRelativeToUnixEpoch = ns;
+	dnp->vn_mtime_ns = ns;
+	VBOXVFS_NODE_UNLOCK(dnp);
+}
+
+/*
  * Make sure the cached attributes are fresh (younger than the ttl, or
  * re-fetched when force is set).  Detects objects that vanished (ENOENT,
  * node marked stale) or changed type (ESTALE), and purges the name cache
@@ -366,7 +393,7 @@ vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force)
 
 	VBOXVFS_NODE_LOCK(np);
 	if (!force && np->vn_info_time != 0 &&
-	    sbinuptime() - np->vn_info_time < vmp->vm_ttl) {
+	    getsbinuptime() - np->vn_info_time < vmp->vm_ttl) {
 		VBOXVFS_NODE_UNLOCK(np);
 		return (0);
 	}
@@ -694,7 +721,7 @@ vboxvfs_node_ref(struct vboxvfs_node *dnp, const char *name, u_int namelen,
  */
 int
 vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
-    SHFLHANDLE *handlep)
+    SHFLHANDLE *handlep, bool *openedp)
 {
 	struct vboxvfs_mount *vmp;
 	struct vnode *vp;
@@ -709,6 +736,8 @@ vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
 	vp = VBOXVFSTOV(np);
 	vmp = np->vn_vmp;
 
+	if (openedp != NULL)
+		*openedp = false;
 	VBOXVFS_NODE_LOCK(np);
 	if (np->vn_handle != SHFL_HANDLE_NIL &&
 	    (np->vn_haccess & access) == access) {
@@ -747,6 +776,8 @@ vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
 			return (EIO);
 		}
 	}
+	if (openedp != NULL)
+		*openedp = true;
 	vboxvfs_node_update(np, &parms.Info, &is);
 
 	VBOXVFS_NODE_LOCK(np);

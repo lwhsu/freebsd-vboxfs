@@ -249,6 +249,7 @@ vboxvfs_getattr(struct vop_getattr_args *ap)
 	struct vnode *vp;
 	struct vattr *vap;
 	SHFLFSOBJINFO info;
+	uint64_t size;
 	int error;
 
 	vp = ap->a_vp;
@@ -261,6 +262,7 @@ vboxvfs_getattr(struct vop_getattr_args *ap)
 		return (error);
 	VBOXVFS_NODE_LOCK(np);
 	info = np->vn_info;
+	size = np->vn_size;	/* kept current by our own writes */
 	VBOXVFS_NODE_UNLOCK(np);
 
 	VATTR_NULL(vap);
@@ -271,7 +273,7 @@ vboxvfs_getattr(struct vop_getattr_args *ap)
 	vap->va_gid = vmp->vm_gid;
 	vap->va_fsid = vp->v_mount->mnt_stat.f_fsid.val[0];
 	vap->va_fileid = np->vn_ino;
-	vap->va_size = info.cbObject;
+	vap->va_size = size;
 	vap->va_blocksize = vmp->vm_biosize;
 	vboxvfs_ns2ts(info.AccessTime.i64NanosecondsRelativeToUnixEpoch,
 	    &vap->va_atime);
@@ -297,24 +299,30 @@ vboxvfs_open(struct vop_open_args *ap)
 	SHFLHANDLE handle;
 	uint64_t size;
 	int error;
+	bool opened;
 
 	vp = ap->a_vp;
 	np = VTOVBOXVFS(vp);
 	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "open ino %ju mode %#x\n",
 	    (uintmax_t)np->vn_ino, ap->a_mode);
 
-	/* Close-to-open consistency: always ask the host at open time. */
-	error = vboxvfs_node_revalidate(np, true);
-	if (error != 0)
-		return (error);
 	/*
-	 * Open the host handle now with the access that was asked for, so
-	 * that e.g. O_WRONLY on a file the host will not let us write fails
-	 * here and not at the first write.
+	 * Close-to-open consistency: ask the host at open time.  For a regular
+	 * file the host handle is opened right here with the access that was
+	 * asked for (so that e.g. O_WRONLY on a file the host will not let us
+	 * write fails now, not at the first write), and the answer to that
+	 * carries the fresh attributes; only when a sufficient handle was
+	 * already open is a separate refresh needed.
 	 */
+	opened = false;
 	if (vp->v_type == VREG) {
 		error = vboxvfs_node_handle(np, (ap->a_mode & FWRITE) ?
-		    SHFL_CF_ACCESS_WRITE : SHFL_CF_ACCESS_READ, &handle);
+		    SHFL_CF_ACCESS_WRITE : SHFL_CF_ACCESS_READ, &handle, &opened);
+		if (error != 0)
+			return (error);
+	}
+	if (!opened) {
+		error = vboxvfs_node_revalidate(np, true);
 		if (error != 0)
 			return (error);
 	}
@@ -832,7 +840,7 @@ vboxvfs_create(struct vop_create_args *ap)
 		return (error);
 	if (parms.Handle == SHFL_HANDLE_NIL)
 		return (vboxvfs_create_result(parms.Result));
-	vboxvfs_node_invalattr(dnp);
+	vboxvfs_node_dirchanged(dnp);
 	if ((parms.Info.Attr.fMode & ALLPERMS) != mode)
 		vboxvfs_fixmode(vmp, parms.Handle, RTFS_TYPE_FILE, mode,
 		    &parms.Info);
@@ -896,7 +904,7 @@ vboxvfs_mkdir(struct vop_mkdir_args *ap)
 		return (error);
 	if (parms.Handle == SHFL_HANDLE_NIL)
 		return (vboxvfs_create_result(parms.Result));
-	vboxvfs_node_invalattr(dnp);
+	vboxvfs_node_dirchanged(dnp);
 	/* The host ignores the mode of new directories (0777 & umask). */
 	if ((parms.Info.Attr.fMode & ALLPERMS) != mode)
 		vboxvfs_fixmode(vmp, parms.Handle, RTFS_TYPE_DIRECTORY, mode,
@@ -944,7 +952,7 @@ vboxvfs_remove(struct vop_remove_args *ap)
 	 * violation, EBUSY); SHFL_FN_CLOSE_AND_REMOVE is the way out there.
 	 */
 	vboxvfs_node_remove(np);
-	vboxvfs_node_invalattr(dnp);
+	vboxvfs_node_dirchanged(dnp);
 	return (0);
 }
 
@@ -984,7 +992,7 @@ vboxvfs_rmdir(struct vop_rmdir_args *ap)
 	cache_vop_rmdir(dvp, vp);
 	vn_seqc_write_end(vp);
 	vn_seqc_write_end(dvp);
-	vboxvfs_node_invalattr(dnp);
+	vboxvfs_node_dirchanged(dnp);
 	return (0);
 }
 
@@ -1134,8 +1142,8 @@ vboxvfs_rename(struct vop_rename_args *ap)
 	}
 	vboxvfs_node_rename(fnp, tdvp, tcnp->cn_nameptr, tcnp->cn_namelen);
 	cache_vop_rename(fdvp, fvp, tdvp, tvp, fcnp, tcnp);
-	vboxvfs_node_invalattr(fdnp);
-	vboxvfs_node_invalattr(tdnp);
+	vboxvfs_node_dirchanged(fdnp);
+	vboxvfs_node_dirchanged(tdnp);
 	vboxvfs_node_invalattr(fnp);
 out:
 	if (seqc) {
@@ -1206,7 +1214,7 @@ vboxvfs_symlink(struct vop_symlink_args *ap)
 		}
 		return (error);
 	}
-	vboxvfs_node_invalattr(dnp);
+	vboxvfs_node_dirchanged(dnp);
 	error = vboxvfs_node_get(vmp, dvp, cnp->cn_nameptr, cnp->cn_namelen,
 	    &info, &is, &vp);
 	if (error != 0)
@@ -1297,7 +1305,7 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 		}
 		if (rdonly)
 			return (EROFS);
-		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_WRITE, &handle);
+		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_WRITE, &handle, NULL);
 		if (error != 0)
 			return (error);
 		vboxvfs_node_modstart(np);

@@ -281,10 +281,11 @@ void	vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info,
 	    const struct vboxvfs_issued *is);
 int	vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force);
 void	vboxvfs_node_invalattr(struct vboxvfs_node *np);
+void	vboxvfs_node_dirchanged(struct vboxvfs_node *dnp);
 void	vboxvfs_node_setsize(struct vnode *vp, uint64_t nsize);
 int	vboxvfs_node_opendir(struct vboxvfs_node *np, SHFLHANDLE *handlep);
 int	vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
-	    SHFLHANDLE *handlep);
+	    SHFLHANDLE *handlep, bool *openedp);
 int	vboxvfs_node_attrhandle(struct vboxvfs_node *np, SHFLHANDLE *handlep,
 	    bool *tmpp);
 void	vboxvfs_node_remove(struct vboxvfs_node *np);

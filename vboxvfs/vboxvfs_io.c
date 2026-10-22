@@ -68,7 +68,7 @@ vboxvfs_doio(struct vnode *vp, struct buf *bp)
 	if (bp->b_iocmd == BIO_READ) {
 		off = (off_t)bp->b_blkno * DEV_BSIZE;
 		len = bp->b_bcount;
-		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_READ, &handle);
+		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_READ, &handle, NULL);
 		if (error == 0)
 			error = vboxvfs_host_read(vmp, handle, off, bp, 0, len,
 			    &done);
@@ -89,7 +89,7 @@ vboxvfs_doio(struct vnode *vp, struct buf *bp)
 			off = (off_t)bp->b_blkno * DEV_BSIZE + bp->b_dirtyoff;
 			len = bp->b_dirtyend - bp->b_dirtyoff;
 			error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_WRITE,
-			    &handle);
+			    &handle, NULL);
 			if (error == 0)
 				error = vboxvfs_host_write(vmp, handle, off, bp,
 				    bp->b_dirtyoff, len, &done);
