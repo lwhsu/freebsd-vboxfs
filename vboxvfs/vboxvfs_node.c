@@ -530,34 +530,92 @@ vboxvfs_node_freedir(struct vboxvfs_node *np)
 /*
  * Free a node that is no longer attached to a vnode.
  */
-void
-vboxvfs_node_free(struct vboxvfs_node *np)
+/* Free a node whose vnode is gone and that has no children left. */
+static void
+vboxvfs_node_destroy(struct vboxvfs_node *np)
 {
-	struct vboxvfs_node *dnp;
 
-	KASSERT(np->vn_handle == SHFL_HANDLE_NIL,
-	    ("vboxvfs_node_free: host handle still open"));
-	if (np->vn_flags & VBOXVFS_NODE_REFPARENT) {
-		/*
-		 * Dropping the reference may inactivate the parent, and if
-		 * the parent is stale vboxvfs_inactive() would recycle it
-		 * right here, whose reclaim would do the same to its parent:
-		 * a tree removed bottom up unwound as a recursion as deep as
-		 * the tree and overflowed the kernel stack (stress2's mkdir
-		 * test, 100 levels).  Ask the parent's inactive to leave the
-		 * recycling to vnlru this once.
-		 */
-		dnp = np->vn_parent;
-		VBOXVFS_NODE_LOCK(dnp);
-		dnp->vn_flags |= VBOXVFS_NODE_NORECYCLE;
-		VBOXVFS_NODE_UNLOCK(dnp);
-		vrele(VBOXVFSTOV(dnp));
-	}
 	vboxvfs_node_freedir(np);
 	free(np->vn_name, M_VBOXVFS);
 	sx_destroy(&np->vn_dirsx);
 	mtx_destroy(&np->vn_mtx);
 	free(np, M_VBOXVFS);
+}
+
+/*
+ * A node stops being a child of dnp: its vnode was reclaimed, or it was
+ * renamed into another directory.  Drops the reference on the parent's
+ * vnode if one was held and returns the parent if it was only waiting for
+ * this last child to be destroyed itself (see vboxvfs_node_free()).
+ *
+ * Dropping the reference may inactivate the parent, and if the parent is
+ * stale vboxvfs_inactive() would recycle it right here, whose reclaim would
+ * do the same to its parent: a tree removed bottom up unwound as a
+ * recursion as deep as the tree and overflowed the kernel stack (stress2's
+ * mkdir test, 100 levels).  Ask the parent's inactive to leave the
+ * recycling to vnlru this once.
+ */
+static struct vboxvfs_node *
+vboxvfs_node_unparent(struct vboxvfs_node *dnp, bool ref)
+{
+	struct vnode *dvp;
+	bool last;
+
+	VBOXVFS_NODE_LOCK(dnp);
+	KASSERT(dnp->vn_children > 0, ("vboxvfs_node_unparent: no children"));
+	dnp->vn_children--;
+	if (ref)
+		dnp->vn_flags |= VBOXVFS_NODE_NORECYCLE;
+	last = dnp->vn_children == 0 &&
+	    (dnp->vn_flags & VBOXVFS_NODE_GONE) != 0;
+	dvp = VBOXVFSTOV(dnp);
+	VBOXVFS_NODE_UNLOCK(dnp);
+	if (ref)
+		vrele(dvp);
+	return (last ? dnp : NULL);
+}
+
+/* Destroy np and then every ancestor that was waiting for it. */
+static void
+vboxvfs_node_release(struct vboxvfs_node *np)
+{
+	struct vboxvfs_node *dnp;
+	bool ref;
+
+	while (np != NULL) {
+		if (np->vn_flags & VBOXVFS_NODE_ROOT) {
+			dnp = NULL;
+			ref = false;
+		} else {
+			dnp = np->vn_parent;
+			ref = (np->vn_flags & VBOXVFS_NODE_REFPARENT) != 0;
+		}
+		vboxvfs_node_destroy(np);
+		np = dnp != NULL ? vboxvfs_node_unparent(dnp, ref) : NULL;
+	}
+}
+
+/*
+ * The vnode is being reclaimed.  The node itself stays as long as children
+ * point at it through vn_parent: a forced unmount reclaims the vnodes in
+ * the order of the mount's list, parents before children at times, and a
+ * child still walks the chain for its path and drops its reference on the
+ * parent's vnode when its own turn comes.  The last child to go destroys
+ * the parent (vboxvfs_node_unparent()).
+ */
+void
+vboxvfs_node_free(struct vboxvfs_node *np)
+{
+	bool last;
+
+	KASSERT(np->vn_handle == SHFL_HANDLE_NIL,
+	    ("vboxvfs_node_free: host handle still open"));
+	VBOXVFS_NODE_LOCK(np);
+	np->vn_flags |= VBOXVFS_NODE_GONE;
+	last = np->vn_children == 0;
+	VBOXVFS_NODE_UNLOCK(np);
+	if (last)
+		vboxvfs_node_release(np);
 }
 
 /*
@@ -719,6 +777,9 @@ vboxvfs_node_get(struct vboxvfs_mount *vmp, struct vnode *dvp,
 		np->vn_flags |= VBOXVFS_NODE_ROOT;
 	} else {
 		np->vn_parent = dnp;
+		VBOXVFS_NODE_LOCK(dnp);
+		dnp->vn_children++;
+		VBOXVFS_NODE_UNLOCK(dnp);
 		/*
 		 * Children keep their parent alive.  The root is kept by the
 		 * mount itself and must not be referenced, or vflush() could
@@ -964,7 +1025,6 @@ vboxvfs_node_rename(struct vboxvfs_node *np, struct vnode *tdvp,
     const char *name, u_int namelen)
 {
 	struct vboxvfs_node *tdnp, *oldparent;
-	struct vnode *oldparentvp;
 	char *newname;
 	bool oldref;
 
@@ -980,6 +1040,9 @@ vboxvfs_node_rename(struct vboxvfs_node *np, struct vnode *tdvp,
 	np->vn_name = newname;
 	np->vn_namelen = namelen;
 	np->vn_parent = tdnp;
+	VBOXVFS_NODE_LOCK(tdnp);
+	tdnp->vn_children++;
+	VBOXVFS_NODE_UNLOCK(tdnp);
 	VBOXVFS_NODE_LOCK(np);
 	np->vn_flags &= ~VBOXVFS_NODE_REFPARENT;
 	if ((tdnp->vn_flags & VBOXVFS_NODE_ROOT) == 0) {
@@ -992,9 +1055,8 @@ vboxvfs_node_rename(struct vboxvfs_node *np, struct vnode *tdvp,
 		    vboxvfs_node_hash(tdnp, name, namelen));
 	sx_xunlock(&vboxvfs_rename_lock);
 
-	oldparentvp = VBOXVFSTOV(oldparent);
-	if (oldref)
-		vrele(oldparentvp);
+	/* The old parent is destroyed if it was only waiting for this child. */
+	vboxvfs_node_release(vboxvfs_node_unparent(oldparent, oldref));
 }
 
 /*

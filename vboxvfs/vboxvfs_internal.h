@@ -133,6 +133,9 @@ struct vboxvfs_node {
 	sbintime_t		 vn_flushreq;	/* (m) when the syncer was last
 					   asked to flush written-behind
 					   data early */
+	u_int			 vn_children;	/* (m) nodes whose vn_parent this is;
+					   the node outlives its vnode
+					   while > 0 */
 
 	/* Host handle. */
 	SHFLHANDLE		 vn_handle;	/* (m) SHFL_HANDLE_NIL if none */
@@ -169,7 +172,9 @@ struct vboxvfs_node {
 					   host mtime change */
 #define	VBOXVFS_NODE_NORECYCLE	0x0020	/* inactive: leave the recycling to
 					   vnlru this once, see
-					   vboxvfs_node_free() */
+					   vboxvfs_node_unparent() */
+#define	VBOXVFS_NODE_GONE	0x0040	/* the vnode was reclaimed; the node
+					   waits for its children */
 
 #define	VFSTOVBOXVFS(mp)	((struct vboxvfs_mount *)((mp)->mnt_data))
 #define	VTOVBOXVFS(vp)		((struct vboxvfs_node *)((vp)->v_data))
