@@ -99,10 +99,14 @@ ok truncate -s 1234 f3
 eq "size after truncate -s 1234" 1234 "$(size f3)"
 ok truncate -s 0 f3
 eq "size after truncate -s 0" 0 "$(size f3)"
-ok touch -d @1700000000 f3
+ok touch -d 2023-11-14T22:13:20Z f3
 eq "mtime after touch -d" 1700000000 "$(mtime f3)"
-ok touch -d @0 f3
-eq "mtime after touch -d @0 (epoch, sent as 1 ns)" 0 "$(mtime f3)"
+eq "atime after touch -d" 1700000000 "$(stat -f %a f3)"
+ok touch -d 1970-01-01T00:00:00Z f3
+eq "mtime after touch -d epoch (sent as 1 ns)" 0 "$(mtime f3)"
+ok touch -m -d 2024-01-01T00:00:00Z f3
+eq "mtime after touch -m" 1704067200 "$(mtime f3)"
+eq "atime unchanged by touch -m" 0 "$(stat -f %a f3)"
 ok touch f3
 
 echo "==> ownership"
