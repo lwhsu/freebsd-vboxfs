@@ -233,6 +233,7 @@ u_int	vboxvfs_node_hash(const struct vboxvfs_node *dnp, const char *name,
 	    u_int namelen);
 void	vboxvfs_node_setinfo(struct vboxvfs_node *np,
 	    const SHFLFSOBJINFO *info);
+void	vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info);
 int	vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force);
 void	vboxvfs_node_invalattr(struct vboxvfs_node *np);
 void	vboxvfs_node_setsize(struct vnode *vp, uint64_t nsize);

@@ -232,6 +232,47 @@ vboxvfs_node_setinfo(struct vboxvfs_node *np, const SHFLFSOBJINFO *info)
 	VBOXVFS_NODE_UNLOCK(np);
 }
 
+/*
+ * Record attributes reported by the host for a node that may have cached
+ * data, and react to what changed since the attributes were last recorded:
+ * a regular file whose size or modification time moved under us (and not
+ * because of our own write-through, see VBOXVFS_NODE_MODIFIED) loses its
+ * cached pages, a directory loses its name cache entries.  Every place that
+ * learns fresh attributes of an existing node must come through here, or
+ * the next revalidation compares against already updated values and the
+ * stale data survives (a file replaced on the host was read as its old
+ * self for as long as it stayed cached).  Called with the vnode locked,
+ * shared or exclusive.
+ */
+void
+vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info)
+{
+	struct vnode *vp;
+	uint64_t oldsize;
+	int64_t oldmtime;
+	bool changed, modified;
+
+	vp = VBOXVFSTOV(np);
+	VBOXVFS_NODE_LOCK(np);
+	oldsize = np->vn_size;
+	oldmtime = np->vn_mtime_ns;
+	modified = (np->vn_flags & VBOXVFS_NODE_MODIFIED) != 0;
+	np->vn_flags &= ~VBOXVFS_NODE_MODIFIED;
+	VBOXVFS_NODE_UNLOCK(np);
+	vboxvfs_node_setinfo(np, info);
+	changed = oldsize != info->cbObject || oldmtime !=
+	    info->ModificationTime.i64NanosecondsRelativeToUnixEpoch;
+	if (!changed)
+		return;
+	if (vp->v_type == VDIR)
+		cache_purge(vp);
+	else if (vp->v_type == VREG) {
+		if (!modified)
+			(void)vinvalbuf(vp, V_SAVE, 0, 0);
+		vboxvfs_node_setsize(vp, info->cbObject);
+	}
+}
+
 void
 vboxvfs_node_invalattr(struct vboxvfs_node *np)
 {
@@ -257,10 +298,7 @@ vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force)
 	SHFLHANDLE handle;
 	char *path;
 	size_t pathlen;
-	uint64_t oldsize;
-	int64_t oldmtime;
 	int error;
-	bool changed, modified;
 
 	vp = VBOXVFSTOV(np);
 	vmp = np->vn_vmp;
@@ -302,34 +340,7 @@ vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force)
 		return (ESTALE);
 	}
 
-	VBOXVFS_NODE_LOCK(np);
-	oldsize = np->vn_size;
-	oldmtime = np->vn_mtime_ns;
-	modified = (np->vn_flags & VBOXVFS_NODE_MODIFIED) != 0;
-	np->vn_flags &= ~VBOXVFS_NODE_MODIFIED;
-	np->vn_info = info;
-	np->vn_info_time = sbinuptime();
-	if (np->vn_info_time == 0)
-		np->vn_info_time = 1;
-	np->vn_size = info.cbObject;
-	np->vn_mtime_ns = info.ModificationTime.i64NanosecondsRelativeToUnixEpoch;
-	changed = oldsize != np->vn_size || oldmtime != np->vn_mtime_ns;
-	VBOXVFS_NODE_UNLOCK(np);
-
-	if (changed) {
-		if (vp->v_type == VDIR)
-			cache_purge(vp);
-		else if (vp->v_type == VREG) {
-			/*
-			 * Somebody else changed the file: drop the cached
-			 * pages (writing back anything dirty first).  If the
-			 * change is our own write-through, keep them.
-			 */
-			if (!modified)
-				(void)vinvalbuf(vp, V_SAVE, 0, 0);
-			vboxvfs_node_setsize(vp, info.cbObject);
-		}
-	}
+	vboxvfs_node_update(np, &info);
 	return (0);
 }
 
@@ -364,7 +375,7 @@ vboxvfs_node_opendir(struct vboxvfs_node *np, SHFLHANDLE *handlep)
 			return (EIO);
 		}
 	}
-	vboxvfs_node_setinfo(np, &parms.Info);
+	vboxvfs_node_update(np, &parms.Info);
 	*handlep = parms.Handle;
 	return (0);
 }
@@ -460,7 +471,7 @@ vboxvfs_node_get(struct vboxvfs_mount *vmp, struct vnode *dvp,
 		if (info == NULL)
 			return (0);
 		if (vboxvfs_mode2type(info->Attr.fMode) == (*vpp)->v_type) {
-			vboxvfs_node_setinfo(np, info);
+			vboxvfs_node_update(np, info);
 			VBOXVFS_NODE_LOCK(np);
 			np->vn_flags &= ~VBOXVFS_NODE_STALE;
 			VBOXVFS_NODE_UNLOCK(np);
@@ -624,7 +635,7 @@ vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
 			return (EIO);
 		}
 	}
-	vboxvfs_node_setinfo(np, &parms.Info);
+	vboxvfs_node_update(np, &parms.Info);
 
 	VBOXVFS_NODE_LOCK(np);
 	if (np->vn_handle != SHFL_HANDLE_NIL &&
