@@ -12,6 +12,6 @@ VM=${1:?VM}; TAG=${2:?tag}; DIR=${3:?dir}; OUT=${4:?out}; REMOUNT=${5:-}; shift 
 TREE=${TREE:-/root/freebsd-vboxfs}; BENCH_ENV=${BENCH_ENV:-}
 mkdir -p "$OUT"
 ssh -o BatchMode=yes "$VM" "uname -a; nproc 2>/dev/null || sysctl -n hw.ncpu; mount | grep -E ' $(dirname $DIR)| $DIR' | head -3" > "$OUT/$TAG.env.txt" 2>&1
-echo "$(date -u +%T) $TAG: start" >&2
+echo "$(date -u +%T) $TAG: start; host load: $(uptime | sed 's/.*load/load/')" >&2
 ssh -o BatchMode=yes "$VM" "env REMOUNT='$REMOUNT' $BENCH_ENV sh $TREE/tests/perf/bench.sh $DIR $TAG $*" 2>"$OUT/$TAG.err" | LC_ALL=C tr -cd '\11\12\15\40-\176' | tee "$OUT/$TAG.csv"
-echo "$(date -u +%T) $TAG: done" >&2
+echo "$(date -u +%T) $TAG: done; host load: $(uptime | sed 's/.*load/load/')" >&2
