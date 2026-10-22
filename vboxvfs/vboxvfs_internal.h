@@ -240,6 +240,8 @@ void	vboxvfs_node_setsize(struct vnode *vp, uint64_t nsize);
 int	vboxvfs_node_opendir(struct vboxvfs_node *np, SHFLHANDLE *handlep);
 int	vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
 	    SHFLHANDLE *handlep);
+int	vboxvfs_node_attrhandle(struct vboxvfs_node *np, SHFLHANDLE *handlep,
+	    bool *tmpp);
 void	vboxvfs_node_remove(struct vboxvfs_node *np);
 void	vboxvfs_node_rename(struct vboxvfs_node *np, struct vnode *tdvp,
 	    const char *name, u_int namelen);

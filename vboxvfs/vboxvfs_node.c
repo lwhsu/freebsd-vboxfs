@@ -656,6 +656,68 @@ vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
 }
 
 /*
+ * A handle good enough for changing attributes: the node's own handle if it
+ * can write (data or attributes), else a temporary one opened for attribute
+ * writing only, which the caller must close when *tmpp is set.  Unlike
+ * vboxvfs_node_handle() this never widens the node's handle: re-opening a
+ * file that is open for writing once its new, read-only mode is in place
+ * (cp -p, install(1)) is refused by the host, which is not root there.
+ */
+int
+vboxvfs_node_attrhandle(struct vboxvfs_node *np, SHFLHANDLE *handlep,
+    bool *tmpp)
+{
+	struct vboxvfs_mount *vmp;
+	struct vnode *vp;
+	SHFLCREATEPARMS parms;
+	char *path;
+	size_t pathlen;
+	uint32_t cflags;
+	int error;
+
+	vp = VBOXVFSTOV(np);
+	vmp = np->vn_vmp;
+
+	VBOXVFS_NODE_LOCK(np);
+	if (np->vn_handle != SHFL_HANDLE_NIL && (np->vn_haccess &
+	    (SHFL_CF_ACCESS_WRITE | SHFL_CF_ACCESS_ATTR_WRITE)) != 0) {
+		*handlep = np->vn_handle;
+		*tmpp = false;
+		VBOXVFS_NODE_UNLOCK(np);
+		return (0);
+	}
+	VBOXVFS_NODE_UNLOCK(np);
+
+	cflags = SHFL_CF_ACT_OPEN_IF_EXISTS | SHFL_CF_ACT_FAIL_IF_NEW |
+	    SHFL_CF_ACCESS_DENYNONE | SHFL_CF_ACCESS_ATTR_WRITE;
+	if (vp->v_type == VDIR)
+		cflags |= SHFL_CF_DIRECTORY;
+	error = vboxvfs_node_path(np, &path, &pathlen);
+	if (error != 0)
+		return (error);
+	error = vboxvfs_host_create(vmp, path, pathlen, cflags, 0, &parms);
+	vboxvfs_node_freepath(path);
+	if (error != 0)
+		return (error);
+	if (parms.Handle == SHFL_HANDLE_NIL) {
+		switch (parms.Result) {
+		case SHFL_FILE_NOT_FOUND:
+		case SHFL_PATH_NOT_FOUND:
+			VBOXVFS_NODE_LOCK(np);
+			np->vn_flags |= VBOXVFS_NODE_STALE;
+			VBOXVFS_NODE_UNLOCK(np);
+			return (ENOENT);
+		default:
+			return (EIO);
+		}
+	}
+	vboxvfs_node_update(np, &parms.Info);
+	*handlep = parms.Handle;
+	*tmpp = true;
+	return (0);
+}
+
+/*
  * The object behind the node is gone (unlinked, or replaced by a rename):
  * make sure no lookup finds the node again and that it is recycled once
  * the last user is done with it.

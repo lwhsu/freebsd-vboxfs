@@ -1238,7 +1238,7 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 	SHFLHANDLE handle;
 	uint64_t oldsize;
 	int error;
-	bool rdonly;
+	bool rdonly, tmphandle;
 
 	vp = ap->a_vp;
 	vap = ap->a_vap;
@@ -1307,8 +1307,7 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 			return (error);
 		if (vp->v_type == VLNK)
 			goto times;
-		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_ATTR_WRITE,
-		    &handle);
+		error = vboxvfs_node_attrhandle(np, &handle, &tmphandle);
 		if (error != 0)
 			return (error);
 		RT_ZERO(info);
@@ -1316,6 +1315,8 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 		    (vap->va_mode & ALLPERMS);
 		info.Attr.enmAdditional = SHFLFSOBJATTRADD_NOTHING;
 		error = vboxvfs_host_setinfo(vmp, handle, &info);
+		if (tmphandle)
+			(void)vboxvfs_host_close(vmp, handle);
 		if (error != 0)
 			return (error);
 		vboxvfs_node_invalattr(np);
@@ -1343,8 +1344,7 @@ times:
 		}
 		if (vp->v_type == VLNK)
 			return (0);
-		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_ATTR_WRITE,
-		    &handle);
+		error = vboxvfs_node_attrhandle(np, &handle, &tmphandle);
 		if (error != 0)
 			return (error);
 		/*
@@ -1372,6 +1372,8 @@ times:
 				info.BirthTime.i64NanosecondsRelativeToUnixEpoch = 1;
 		}
 		error = vboxvfs_host_setinfo(vmp, handle, &info);
+		if (tmphandle)
+			(void)vboxvfs_host_close(vmp, handle);
 		if (error != 0)
 			return (error);
 		vboxvfs_node_invalattr(np);
