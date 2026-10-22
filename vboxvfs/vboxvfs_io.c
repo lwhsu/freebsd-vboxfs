@@ -210,7 +210,8 @@ vboxvfs_write(struct vop_write_args *ap)
 	daddr_t lbn;
 	ssize_t local_resid;
 	off_t nsize;
-	int bcount, biosize, error, error1, ioflag, n, on;
+	int bcount, biosize, error, error1, ioflag, n, obcount, on;
+	uint32_t save;
 	bool bp_cached, extended;
 
 	vp = ap->a_vp;
@@ -247,26 +248,53 @@ vboxvfs_write(struct vop_write_args *ap)
 		on = uio->uio_offset - (off_t)lbn * biosize;
 		n = MIN((unsigned)(biosize - on), uio->uio_resid);
 
-		/* Extend the file first so that getblk() sees the new size. */
-		extended = false;
 		VBOXVFS_NODE_LOCK(np);
-		if (uio->uio_offset + n > (off_t)np->vn_size) {
-			np->vn_size = uio->uio_offset + n;
-			extended = true;
-		}
 		nsize = np->vn_size;
-		np->vn_flags |= VBOXVFS_NODE_MODIFIED;
 		VBOXVFS_NODE_UNLOCK(np);
-		if (extended)
+		if (uio->uio_offset == nsize && n > 0 &&
+		    (obcount = nsize - (off_t)lbn * biosize) > 0) {
+			/*
+			 * Appending to a block that already has data: get the
+			 * buffer at its old size so that B_CACHE survives, then
+			 * grow the file and the buffer.  Without this every
+			 * append would read the block back from the host first.
+			 */
+			bp = vboxvfs_getcacheblk(vp, lbn, obcount);
+			if (bp == NULL) {
+				error = EINTR;
+				break;
+			}
+			VBOXVFS_NODE_LOCK(np);
+			np->vn_size = nsize + n;
+			np->vn_flags |= VBOXVFS_NODE_MODIFIED;
+			nsize = np->vn_size;
+			VBOXVFS_NODE_UNLOCK(np);
 			vnode_pager_setsize(vp, nsize);
-		bcount = biosize;
-		if ((off_t)(lbn + 1) * biosize > nsize)
-			bcount = nsize - (off_t)lbn * biosize;
-
-		bp = vboxvfs_getcacheblk(vp, lbn, bcount);
-		if (bp == NULL) {
-			error = EINTR;
-			break;
+			save = bp->b_flags & B_CACHE;
+			bcount = obcount + n;
+			allocbuf(bp, bcount);
+			bp->b_flags |= save;
+		} else {
+			/* Extend the file first so that getblk() sees the size. */
+			extended = false;
+			VBOXVFS_NODE_LOCK(np);
+			if (uio->uio_offset + n > (off_t)np->vn_size) {
+				np->vn_size = uio->uio_offset + n;
+				extended = true;
+			}
+			nsize = np->vn_size;
+			np->vn_flags |= VBOXVFS_NODE_MODIFIED;
+			VBOXVFS_NODE_UNLOCK(np);
+			if (extended)
+				vnode_pager_setsize(vp, nsize);
+			bcount = biosize;
+			if ((off_t)(lbn + 1) * biosize > nsize)
+				bcount = nsize - (off_t)lbn * biosize;
+			bp = vboxvfs_getcacheblk(vp, lbn, bcount);
+			if (bp == NULL) {
+				error = EINTR;
+				break;
+			}
 		}
 		/*
 		 * A write covering the whole buffer needs no read; otherwise

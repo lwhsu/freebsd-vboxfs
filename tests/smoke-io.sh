@@ -100,7 +100,7 @@ cat > "$L/mm.c" <<'CEOF'
 #include <unistd.h>
 int main(int argc, char **argv)
 {
-	char buf[8192], *p; int fd; off_t sz = 65536 + 4096;
+	char buf[8192], *p; int fd; off_t sz = 65536 + 8192;	/* 9 writes of 8 KiB below */
 	if (argc != 2) errx(1, "usage");
 	fd = open(argv[1], O_RDWR | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0) err(1, "open");
