@@ -107,6 +107,13 @@ s=$(awk '/^synced/ { print $2 }' "$H/.fsync.out")
 if [ -n "$t" ] && [ -n "$s" ]; then lag=$((t - s)); echo "        visible $lag ms after fsync returned"; [ "$lag" -le 500 ] && ok "fsync: visible at once" || bad "fsync: $lag ms"; else bad "fsync: never visible"; fi
 guest_result "$H/.fsync.out" "fsync"
 
+echo "==> sync(2) pushes data behind"
+guest syncall > "$H/.syncall.out" 2>&1 & gpid=$!
+t=$(wait_for "$H/syncall.txt" syncall 6000); wait $gpid
+s=$(awk '/^synced/ { print $2 }' "$H/.syncall.out")
+if [ -n "$t" ] && [ -n "$s" ]; then lag=$((t - s)); echo "        visible $lag ms after sync returned"; [ "$lag" -le 500 ] && ok "syncall: visible at once" || bad "syncall: $lag ms"; else bad "syncall: never visible"; fi
+guest_result "$H/.syncall.out" "syncall"
+
 echo "==> O_SYNC writes go through"
 guest osync > "$H/.osync.out" 2>&1 & gpid=$!
 t=$(wait_for "$H/osync.txt" osync 6000); wait $gpid

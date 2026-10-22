@@ -106,6 +106,16 @@ if ($scen eq "delayed") {
 	printf "synced %d\n", now_ms();
 	sleep 2;
 	close($fh) or bad("close fsync.txt: $!");
+} elsif ($scen eq "syncall") {
+	# sync(2) (VFS_SYNC through the default vfs_stdsync) pushes data written
+	# behind to the host before close(2).
+	open(my $fh, '>', "$dir/syncall.txt") or die "open: $!";
+	$fh->autoflush(1);
+	print $fh "syncall\n";
+	system("sync") == 0 or bad("sync(1): $?");
+	printf "synced %d\n", now_ms();
+	sleep 2;
+	close($fh) or bad("close syncall.txt: $!");
 } elsif ($scen eq "osync") {
 	# O_SYNC writes go through right away.
 	sysopen(my $fh, "$dir/osync.txt", O_WRONLY | O_CREAT | O_TRUNC | O_SYNC,

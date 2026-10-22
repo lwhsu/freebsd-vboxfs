@@ -473,7 +473,11 @@ vboxvfs_fsync(struct vop_fsync_args *ap)
 
 	vp = ap->a_vp;
 	np = VTOVBOXVFS(vp);
-	error = vboxvfs_flushbufs(vp, ap->a_waitfor, true);
+	/*
+	 * Only a waiting caller (fsync(2), close) is told about a delayed
+	 * write that failed; the syncer and sync(2) would swallow the error.
+	 */
+	error = vboxvfs_flushbufs(vp, ap->a_waitfor, ap->a_waitfor == MNT_WAIT);
 	/* The syncer's periodic visit does not warrant an fsync on the host. */
 	if (error != 0 || vp->v_type != VREG || ap->a_waitfor == MNT_LAZY)
 		return (error);

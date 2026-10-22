@@ -370,6 +370,11 @@ static struct vfsops vboxvfs_vfsops = {
 	.vfs_unmount =	vboxvfs_unmount,
 	.vfs_root =	vboxvfs_root,
 	.vfs_statfs =	vboxvfs_statfs,
+	/*
+	 * sync(2), the syncer's per-mount pass and unmount flush the vnodes
+	 * with data written behind; the default would be vfs_stdnosync().
+	 */
+	.vfs_sync =	vfs_stdsync,
 };
 
 VFS_SET(vboxvfs_vfsops, vboxvfs, VFCF_NETWORK);
