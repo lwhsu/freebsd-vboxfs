@@ -54,6 +54,10 @@ cat >> "$MNT/etc/rc.conf" <<EOT
 hostname="$HOST"
 sshd_enable="YES"
 dumpdev="AUTO"
+# Step the clock to the host's at VBoxService start instead of slewing for
+# minutes: files created on the host carry the host's time, UTIME_NOW the
+# guest's, and a skew of a second confuses tests (pjdfstest utimensat/01.t).
+vboxservice_flags="--timesync-set-start --timesync-set-threshold 1000"
 EOT
 
 sed -i '' 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/' \
