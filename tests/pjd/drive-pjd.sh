@@ -38,7 +38,11 @@ wait_ssh() {
 }
 remount_and_launch() {
 	wait_ssh || { log "ssh not reachable"; exit 1; }
-	$SSH "mount -t vboxvfs | grep -q ' on /mnt/share ' || { kldstat -q -n vboxvfs || kldload $KO; $MNT_VBOXVFS -o uid=0,gid=0 share /mnt/share; }; mount -t vboxvfs | grep -q ' on /mnt/share ' || { echo 'NOT MOUNTED'; exit 1; }; mkdir -p $TESTDIR $RES; env RES=$RES TESTDIR=$TESTDIR T=$T nohup sh $TREE/tests/pjd/run-pjd.sh > $RES/run.out 2>&1 < /dev/null &" 2>&1
+	# $KO/$MNT_VBOXVFS/$TESTDIR/$RES/$T/$TREE expand here; \$n and \$(...) on the guest
+	out=$($SSH "mount -t vboxvfs | grep -q ' on /mnt/share ' || { kldstat -q -n vboxvfs || kldload $KO; $MNT_VBOXVFS -o uid=0,gid=0 share /mnt/share; }; n=\$(mount -t vboxvfs | grep -c ' on /mnt/share '); [ \$n -eq 1 ] || { echo \"MOUNTED \$n TIMES, refusing to run\"; exit 1; }; mkdir -p $TESTDIR $RES; env RES=$RES TESTDIR=$TESTDIR T=$T nohup sh $TREE/tests/pjd/run-pjd.sh > $RES/run.out 2>&1 < /dev/null &" 2>&1)
+	rc=$?
+	[ -n "$out" ] && log "launch: $out"
+	[ $rc -eq 0 ] || { log "launch FAILED (rc $rc), not retrying"; exit 1; }
 }
 reset_vm() {
 	resets=$((resets + 1))
@@ -67,13 +71,15 @@ while :; do
 		remount_and_launch
 		continue
 	fi
-	out=$($SSH "tail -1 $RES/progress.txt; [ -f $RES/end.txt ] && echo DONE" 2>/dev/null)
-	if [ -z "$out" ]; then
+	out=$($SSH "tail -1 $RES/progress.txt 2>/dev/null; [ -f $RES/end.txt ] && echo DONE; echo ALIVE" 2>/dev/null)
+	case "$out" in
+	*ALIVE*) dead=0 ;;
+	*)
 		dead=$((dead + 1))
 		[ $dead -ge 9 ] && { reset_vm "ssh unreachable for 90s"; dead=0; }
-		continue
-	fi
-	dead=0
+		continue ;;
+	esac
+	out=$(echo "$out" | grep -v '^ALIVE$')
 	line=$(echo "$out" | head -1)
 	echo "$out" | /usr/bin/grep -q DONE && { log "RUN FINISHED after $resets resets"; break; }
 	case "$line" in
