@@ -67,10 +67,18 @@ for vm in "$@"; do
 		else
 			$VBOXMANAGE controlvm "$vm" acpipowerbutton
 		fi
+		# A FreeBSD guest under EFI halts ("All buffers synced") instead
+		# of powering off; pull the plug once it says so.
 		n=0
 		while [ "$(state "$vm")" != "poweroff" ] && [ $n -lt 36 ]; do
 			sleep 5
 			n=$((n + 1))
+			if tail -5 "$VM_DIR/$vm-console.log" 2>/dev/null |
+			    grep -qE "All buffers synced|has halted|press any key"; then
+				sleep 3
+				$VBOXMANAGE controlvm "$vm" poweroff 2>/dev/null
+				sleep 3
+			fi
 		done
 		echo "$vm: $(state "$vm") after ~$((n * 5))s"
 		[ "$(state "$vm")" = "poweroff" ] || rc=1
