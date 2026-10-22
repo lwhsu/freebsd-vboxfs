@@ -89,5 +89,21 @@ if ! grep -q 'share/man/man8/mount_vboxvfs.8.gz' "$A/pkg-plist"; then
 share/man/man8/mount_vboxvfs.8.gz
 ' "$A/pkg-plist"; echo "  added plist entry"
 fi
+if ! grep -q 'mount_vboxvfs' "$A/pkg-message"; then
+	# a short note on shared folders after the "restart the system" line
+	ln=$(grep -n '^To start the services, restart the system.$' "$A/pkg-message" | cut -d: -f1)
+	[ -n "$ln" ] || { echo "cannot find the anchor line in pkg-message" >&2; exit 1; }
+	sed -i '' "${ln}a\\
+\\
+Shared folders are mounted with mount_vboxvfs(8); to mount the folder\\
+named \"share\" so that user 1001 owns the files:\\
+\\
+# mount -t vboxvfs -o uid=1001,gid=1001 share /mnt/share\\
+\\
+or in /etc/fstab:\\
+\\
+share /mnt/share vboxvfs rw,uid=1001,gid=1001,late 0 0
+" "$A/pkg-message"; echo "  added pkg-message note"
+fi
 echo "== result"
 git -C "$PORTSDIR" status --short -- emulators/virtualbox-ose-72/files emulators/virtualbox-ose-additions-72 | sed 's/^/  /'
