@@ -1302,6 +1302,8 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 		error = VOP_ACCESS(vp, VADMIN, cred, curthread);
 		if (error != 0)
 			return (error);
+		if (vp->v_type == VLNK)
+			goto times;
 		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_ATTR_WRITE,
 		    &handle);
 		if (error != 0)
@@ -1316,6 +1318,14 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 		vboxvfs_node_invalattr(np);
 	}
 
+	/*
+	 * A symbolic link can only be reached through its target (opening the
+	 * link's path opens what it points to), so a mode or time change meant
+	 * for the link itself would land on the target.  Accept and ignore such
+	 * a request once the permission checks passed, as the Linux client
+	 * does: the link's own mode and times carry no meaning here.
+	 */
+times:
 	if (vap->va_atime.tv_sec != VNOVAL || vap->va_mtime.tv_sec != VNOVAL ||
 	    vap->va_birthtime.tv_sec != VNOVAL) {
 		if (rdonly)
@@ -1328,6 +1338,8 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 			if (error != 0)
 				return (error);
 		}
+		if (vp->v_type == VLNK)
+			return (0);
 		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_ATTR_WRITE,
 		    &handle);
 		if (error != 0)
