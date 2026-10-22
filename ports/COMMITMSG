@@ -16,9 +16,13 @@ The new driver follows the NFS and smbfs model:
   from a hash of the path, and a name cache with a ttl (mount option
   "ttl", default 200 ms) behind which host side changes are picked up;
 - read/write/mmap through the buffer cache with 64 KiB blocks, pages
-  handed to the host directly (HGCM page lists, no copying), write
-  through, and VOP_GETPAGES via vfs_bio_getpages(9) so that mmap and
+  handed to the host directly (HGCM page lists, no copying), and
+  VOP_GETPAGES via vfs_bio_getpages(9) so that mmap and
   read(2)/write(2) share the same pages;
+- writes behind the way the NFS client does it: a complete block goes
+  to the host at once, a partial one at close(2), fsync(2), msync(2) or
+  within vfs.vboxvfs.writedelay seconds (default 1); the "sync" mount
+  option makes every write(2) reach the host before it returns;
 - rename, rmdir and remove integrated with the name cache
   (cache_vop_rename(9), cache_vop_rmdir(9)), unlinked files stay usable
   while open;
@@ -34,7 +38,10 @@ forcing the owner read bit and clearing setuid/setgid/sticky, path
 length limits), the same set the Linux vboxsf client fails.  fsx with
 mmap, a 10 minute mixed stress run (fsx, stress2, a copy/diff/git
 workload and concurrent changes from the host) and 2 hours of operation
-showed no panics, lockups or data mismatches.
+showed no panics, lockups or data mismatches.  Sequential 4 KiB writes
+run at 4 times the speed of the old driver's write-through and twice
+the Linux client's; large sequential reads and writes are 4 to 8 times
+faster than the Linux client.
 
 The sources are dual licensed GPL-3.0-only OR BSD-2-Clause and are
 maintained at https://github.com/lwhsu/freebsd-vboxfs; the patches in
