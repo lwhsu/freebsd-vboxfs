@@ -41,6 +41,7 @@ for vm in "$@"; do
 	case $cmd in
 	start)
 		mkdir -p "$LOGDIR"
+		: > "$LOGDIR/startvm-$vm.log"
 		# sudo -u is dropped by daemon(8)'s setsid; the environment
 		# variable may carry it, so split VBOXMANAGE into the sudo
 		# prefix and the command.
