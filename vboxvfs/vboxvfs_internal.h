@@ -261,6 +261,7 @@ vop_read_t	vboxvfs_read;
 vop_write_t	vboxvfs_write;
 vop_fsync_t	vboxvfs_fsync;
 vop_getpages_t	vboxvfs_getpages;
+int	vboxvfs_truncate(struct vnode *vp, uint64_t oldsize, uint64_t nsize);
 vop_strategy_t	vboxvfs_strategy;
 
 /*

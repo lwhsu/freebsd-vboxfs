@@ -1290,10 +1290,10 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 		np->vn_size = vap->va_size;
 		np->vn_flags |= VBOXVFS_NODE_MODIFIED;
 		VBOXVFS_NODE_UNLOCK(np);
-		if (vap->va_size < oldsize)
-			(void)vtruncbuf(vp, vap->va_size, vmp->vm_biosize);
-		vnode_pager_setsize(vp, vap->va_size);
+		error = vboxvfs_truncate(vp, oldsize, vap->va_size);
 		vboxvfs_node_invalattr(np);
+		if (error != 0)
+			return (error);
 	}
 
 	if (vap->va_mode != (mode_t)VNOVAL) {

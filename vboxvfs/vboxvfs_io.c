@@ -426,3 +426,37 @@ vboxvfs_getpages(struct vop_getpages_args *ap)
 	    ap->a_rahead, vboxvfs_gbp_getblkno, vboxvfs_gbp_getblksz));
 }
 
+/*
+ * Size change bookkeeping for the cache.  Shrinking: vtruncbuf() drops the
+ * buffers beyond the new end but not the one overlapping it, which may still
+ * carry cached (now stale) data past the new size with B_CACHE set, so
+ * fetch it at its new, shorter size and release it (nfsclient's
+ * ncl_meta_setsize()).  Growing only needs the pager told.  Called with the
+ * vnode locked exclusively, after the host accepted the new size.
+ */
+int
+vboxvfs_truncate(struct vnode *vp, uint64_t oldsize, uint64_t nsize)
+{
+	struct buf *bp;
+	daddr_t lbn;
+	int biosize, bufsize, error;
+
+	biosize = VTOVBOXVFS(vp)->vn_vmp->vm_biosize;
+	if (nsize < oldsize) {
+		error = vtruncbuf(vp, nsize, biosize);
+		lbn = nsize / biosize;
+		bufsize = nsize - (off_t)lbn * biosize;
+		bp = vboxvfs_getcacheblk(vp, lbn, bufsize);
+		if (bp == NULL)
+			return (EINTR);
+		if (bp->b_dirtyoff > bp->b_bcount)
+			bp->b_dirtyoff = bp->b_bcount;
+		if (bp->b_dirtyend > bp->b_bcount)
+			bp->b_dirtyend = bp->b_bcount;
+		bp->b_flags |= B_RELBUF;
+		brelse(bp);
+		return (error);
+	}
+	vnode_pager_setsize(vp, nsize);
+	return (0);
+}
