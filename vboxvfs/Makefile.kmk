@@ -36,30 +36,34 @@ vboxvfs_LIBS      = \
 	$(VBOX_LIB_VBGL_R0) \
 	$(VBOX_LIB_IPRT_GUEST_R0)
 vboxvfs_DEPS      = \
-	$$(vboxvfs_0_OUTDIR)/vnode_if.h \
-	$$(vboxvfs_0_OUTDIR)/vnode_if_newproto.h \
-	$$(vboxvfs_0_OUTDIR)/vnode_if_typedef.h
+	$(vboxvfs_0_OUTDIR)/vnode_if.h \
+	$(vboxvfs_0_OUTDIR)/vnode_if_newproto.h \
+	$(vboxvfs_0_OUTDIR)/vnode_if_typedef.h
 vboxvfs_CLEAN    += $(vboxvfs_DEPS)
 
 #
 # The vnode interface headers are generated from the kernel sources with
 # the same tool the kernel build uses (VBOX_FREEBSD_SRC points at
-# /usr/src/sys of the running kernel).
+# /usr/src/sys of the kernel to build for).  The output directory is made
+# first (kBuild only creates it for the objects), then awk runs inside it.
 #
 VBOX_VNODE_IF_AWK ?= /usr/bin/awk
 VBOX_VNODE_IF_SRC  = $(VBOX_FREEBSD_SRC)/kern/vnode_if.src
 VBOX_VNODE_IF_TOOL = $(VBOX_FREEBSD_SRC)/tools/vnode_if.awk
 
-$$(vboxvfs_0_OUTDIR)/vnode_if.h: $(VBOX_VNODE_IF_SRC) | $$(dir $$@)
-	$(call MSG_TOOL,awk,vboxvfs,$<,$@)
-	$(QUIET)cd $(vboxvfs_0_OUTDIR) && $(VBOX_VNODE_IF_AWK) -f $(VBOX_VNODE_IF_TOOL) $(VBOX_VNODE_IF_SRC) -h
+$$(vboxvfs_0_OUTDIR):
+	$(QUIET)$(MKDIR) -p $@
 
-$$(vboxvfs_0_OUTDIR)/vnode_if_newproto.h: $(VBOX_VNODE_IF_SRC) | $$(dir $$@)
+$$(vboxvfs_0_OUTDIR)/vnode_if.h: $(VBOX_VNODE_IF_SRC) | $$(vboxvfs_0_OUTDIR)
 	$(call MSG_TOOL,awk,vboxvfs,$<,$@)
-	$(QUIET)cd $(vboxvfs_0_OUTDIR) && $(VBOX_VNODE_IF_AWK) -f $(VBOX_VNODE_IF_TOOL) $(VBOX_VNODE_IF_SRC) -p
+	$(QUIET)cd $(vboxvfs_0_OUTDIR) && $(VBOX_VNODE_IF_AWK) -f $(VBOX_VNODE_IF_TOOL) $< -h
 
-$$(vboxvfs_0_OUTDIR)/vnode_if_typedef.h: $(VBOX_VNODE_IF_SRC) | $$(dir $$@)
+$$(vboxvfs_0_OUTDIR)/vnode_if_newproto.h: $(VBOX_VNODE_IF_SRC) | $$(vboxvfs_0_OUTDIR)
 	$(call MSG_TOOL,awk,vboxvfs,$<,$@)
-	$(QUIET)cd $(vboxvfs_0_OUTDIR) && $(VBOX_VNODE_IF_AWK) -f $(VBOX_VNODE_IF_TOOL) $(VBOX_VNODE_IF_SRC) -q
+	$(QUIET)cd $(vboxvfs_0_OUTDIR) && $(VBOX_VNODE_IF_AWK) -f $(VBOX_VNODE_IF_TOOL) $< -p
+
+$$(vboxvfs_0_OUTDIR)/vnode_if_typedef.h: $(VBOX_VNODE_IF_SRC) | $$(vboxvfs_0_OUTDIR)
+	$(call MSG_TOOL,awk,vboxvfs,$<,$@)
+	$(QUIET)cd $(vboxvfs_0_OUTDIR) && $(VBOX_VNODE_IF_AWK) -f $(VBOX_VNODE_IF_TOOL) $< -q
 
 include $(FILE_KBUILD_SUB_FOOTER)
