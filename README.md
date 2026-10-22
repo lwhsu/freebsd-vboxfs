@@ -18,7 +18,7 @@ for history.
 | `ports/`         | `gen-ports-patch.sh` turns this tree into the FreeBSD ports change; `COMMITMSG` is the commit message for it |
 | `scripts/vm/`    | VM provisioning (`prep-freebsd-image.sh`, `create-vm.sh`, `vmctl.sh`) |
 | `scripts/dev/`   | `sync-guest.sh` (rsync the tree into a guest), `gen-opt-global.sh` (kernel options for development builds) |
-| `tests/`         | `smoke-*.sh`, the pjdfstest local patch, `pjd/` (pjdfstest runner and analysis), `stress/` (10 minute stress run, host/guest coherence check) |
+| `tests/`         | `smoke-*.sh`, `writebehind-check.sh` (+ `writebehind-guest.pl`: what the host sees of data written behind), the pjdfstest local patch, `pjd/` (pjdfstest runner and analysis), `stress/` (10 minute stress run, host/guest coherence check), `perf/` (benchmark, DTrace host request profile, result tables) |
 
 ## Design in one paragraph
 
