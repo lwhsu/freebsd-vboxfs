@@ -365,6 +365,7 @@ vboxvfs_close(struct vop_close_args *ap)
 {
 	struct vboxvfs_node *np;
 	struct vnode *vp;
+	int error;
 	bool last;
 
 	vp = ap->a_vp;
@@ -376,12 +377,19 @@ vboxvfs_close(struct vop_close_args *ap)
 	VBOXVFS_NODE_UNLOCK(np);
 	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "close ino %ju last %d\n",
 	    (uintmax_t)np->vn_ino, last);
+	/*
+	 * Close-to-open: what was written behind goes to the host before
+	 * close(2) returns, so that the host and other guests see it.
+	 */
+	error = 0;
+	if (vp->v_type == VREG)
+		error = vboxvfs_flushbufs(vp, MNT_WAIT, true);
 	if (last && vp->v_type == VDIR) {
 		sx_xlock(&np->vn_dirsx);
 		vboxvfs_node_freedir(np);
 		sx_xunlock(&np->vn_dirsx);
 	}
-	return (0);
+	return (error);
 }
 
 /*
@@ -700,6 +708,12 @@ vboxvfs_inactive(struct vop_inactive_args *ap)
 	 * Nothing refers to the file any more: give the host handle back so
 	 * that the host (Windows in particular) can delete or rename it.
 	 */
+	if (vp->v_type == VREG) {
+		if (stale)
+			(void)vinvalbuf(vp, 0, 0, 0);
+		else
+			(void)vboxvfs_flushbufs(vp, MNT_WAIT, true);
+	}
 	vboxvfs_node_closehandle(np);
 	/*
 	 * A stale node (removed, renamed over) is recycled right away so that
@@ -865,7 +879,7 @@ vboxvfs_create(struct vop_create_args *ap)
 		return (error);
 	if (parms.Handle == SHFL_HANDLE_NIL)
 		return (vboxvfs_create_result(parms.Result));
-	vboxvfs_node_dirchanged(dnp);
+	vboxvfs_node_changed(dnp);
 	if ((parms.Info.Attr.fMode & ALLPERMS) != mode)
 		vboxvfs_fixmode(vmp, parms.Handle, RTFS_TYPE_FILE, mode,
 		    &parms.Info);
@@ -929,7 +943,7 @@ vboxvfs_mkdir(struct vop_mkdir_args *ap)
 		return (error);
 	if (parms.Handle == SHFL_HANDLE_NIL)
 		return (vboxvfs_create_result(parms.Result));
-	vboxvfs_node_dirchanged(dnp);
+	vboxvfs_node_changed(dnp);
 	/* The host ignores the mode of new directories (0777 & umask). */
 	if ((parms.Info.Attr.fMode & ALLPERMS) != mode)
 		vboxvfs_fixmode(vmp, parms.Handle, RTFS_TYPE_DIRECTORY, mode,
@@ -964,6 +978,7 @@ vboxvfs_remove(struct vop_remove_args *ap)
 	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "remove ino %ju from %ju\n",
 	    (uintmax_t)np->vn_ino, (uintmax_t)dnp->vn_ino);
 
+	vboxvfs_dropbufs(vp);
 	error = vboxvfs_node_path(np, &path, &pathlen);
 	if (error != 0)
 		return (error);
@@ -977,7 +992,7 @@ vboxvfs_remove(struct vop_remove_args *ap)
 	 * violation, EBUSY); SHFL_FN_CLOSE_AND_REMOVE is the way out there.
 	 */
 	vboxvfs_node_remove(np);
-	vboxvfs_node_dirchanged(dnp);
+	vboxvfs_node_changed(dnp);
 	return (0);
 }
 
@@ -1017,7 +1032,7 @@ vboxvfs_rmdir(struct vop_rmdir_args *ap)
 	cache_vop_rmdir(dvp, vp);
 	vn_seqc_write_end(vp);
 	vn_seqc_write_end(dvp);
-	vboxvfs_node_dirchanged(dnp);
+	vboxvfs_node_changed(dnp);
 	return (0);
 }
 
@@ -1153,6 +1168,8 @@ vboxvfs_rename(struct vop_rename_args *ap)
 	rflags = fvp->v_type == VDIR ? SHFL_RENAME_DIR : SHFL_RENAME_FILE;
 	if (tvp != NULL)
 		rflags |= SHFL_RENAME_REPLACE_IF_EXISTS;
+	if (tvp != NULL)
+		vboxvfs_dropbufs(tvp);
 	error = vboxvfs_host_rename(vmp, src, srclen, dst, dstlen, rflags);
 	if (error != 0)
 		goto out;
@@ -1167,8 +1184,8 @@ vboxvfs_rename(struct vop_rename_args *ap)
 	}
 	vboxvfs_node_rename(fnp, tdvp, tcnp->cn_nameptr, tcnp->cn_namelen);
 	cache_vop_rename(fdvp, fvp, tdvp, tvp, fcnp, tcnp);
-	vboxvfs_node_dirchanged(fdnp);
-	vboxvfs_node_dirchanged(tdnp);
+	vboxvfs_node_changed(fdnp);
+	vboxvfs_node_changed(tdnp);
 	vboxvfs_node_invalattr(fnp);
 out:
 	if (seqc) {
@@ -1239,7 +1256,7 @@ vboxvfs_symlink(struct vop_symlink_args *ap)
 		}
 		return (error);
 	}
-	vboxvfs_node_dirchanged(dnp);
+	vboxvfs_node_changed(dnp);
 	error = vboxvfs_node_get(vmp, dvp, cnp->cn_nameptr, cnp->cn_namelen,
 	    &info, &is, &vp);
 	if (error != 0)

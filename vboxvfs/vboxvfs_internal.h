@@ -25,6 +25,7 @@
 #include <sys/malloc.h>
 #include <sys/mount.h>
 #include <sys/mutex.h>
+#include <sys/rwlock.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
@@ -74,6 +75,9 @@ extern int vboxvfs_debug;
 
 SYSCTL_DECL(_vfs_vboxvfs);
 
+/* kern/vfs_subr.c exports it for file systems, without a prototype. */
+void	vn_syncer_add_to_worklist(struct bufobj *bo, int delay);
+
 /*
  * Per-mount state.
  */
@@ -121,6 +125,14 @@ struct vboxvfs_node {
 					 * progress; host attributes may
 					 * predate them while > 0 */
 	sbintime_t		 vn_modtime;	/* (m) when the last of them started */
+	int			 vn_inio;	/* (m) host handles being opened from
+					   the data path, see vboxvfs_doio() */
+	int			 vn_werror;	/* (m) error of a delayed write,
+					   reported by the next close or
+					   fsync */
+	sbintime_t		 vn_flushreq;	/* (m) when the syncer was last
+					   asked to flush written-behind
+					   data early */
 
 	/* Host handle. */
 	SHFLHANDLE		 vn_handle;	/* (m) SHFL_HANDLE_NIL if none */
@@ -240,11 +252,17 @@ struct vboxvfs_issued {
 static inline void
 vboxvfs_node_issue(struct vboxvfs_node *np, struct vboxvfs_issued *is)
 {
+	struct bufobj *bo;
 
 	is->vi_time = sbinuptime();
 	VBOXVFS_NODE_LOCK(np);
 	is->vi_inflight = np->vn_inflight > 0;
 	VBOXVFS_NODE_UNLOCK(np);
+	bo = &VBOXVFSTOV(np)->v_bufobj;
+	BO_LOCK(bo);
+	if (bo->bo_dirty.bv_cnt > 0 || bo->bo_numoutput > 0)
+		is->vi_inflight = true;
+	BO_UNLOCK(bo);
 }
 
 static inline void
@@ -283,7 +301,7 @@ void	vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info,
 	    const struct vboxvfs_issued *is);
 int	vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force);
 void	vboxvfs_node_invalattr(struct vboxvfs_node *np);
-void	vboxvfs_node_dirchanged(struct vboxvfs_node *dnp);
+void	vboxvfs_node_changed(struct vboxvfs_node *dnp);
 void	vboxvfs_node_setsize(struct vnode *vp, uint64_t nsize);
 int	vboxvfs_node_opendir(struct vboxvfs_node *np, SHFLHANDLE *handlep);
 int	vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
@@ -312,6 +330,8 @@ extern struct vop_vector vboxvfs_vnodeops;
 vop_read_t	vboxvfs_read;
 vop_write_t	vboxvfs_write;
 vop_fsync_t	vboxvfs_fsync;
+int	vboxvfs_flushbufs(struct vnode *vp, int waitfor, bool report);
+void	vboxvfs_dropbufs(struct vnode *vp);
 vop_getpages_t	vboxvfs_getpages;
 int	vboxvfs_truncate(struct vnode *vp, uint64_t oldsize, uint64_t nsize);
 vop_strategy_t	vboxvfs_strategy;

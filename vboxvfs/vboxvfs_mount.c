@@ -36,6 +36,8 @@ static bool vboxvfs_host_ready;
 /* File system specific mount options; the VFS layer knows the rest. */
 static const char *vboxvfs_opts[] = {
 	"from", "export",
+	/* Generic ones the kernel turns into mount flags for us. */
+	"sync", "async", "noasync", "noatime",
 	"uid", "gid", "file_mode", "dir_mode", "fmask", "dmask", "ttl",
 	NULL
 };

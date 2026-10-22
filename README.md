@@ -26,9 +26,14 @@ Nodes are cached by (parent, name) with `vfs_hash(9)` and get inode numbers
 from a hash of the path; attributes are cached for a ttl (mount option `ttl`,
 default 200 ms) after which the host is asked again and cached pages are
 dropped if the file changed there.  Data goes through the buffer cache in
-64 KiB blocks, pages are handed to the host directly (HGCM page lists), writes
-are written through, and `VOP_GETPAGES` uses `vfs_bio_getpages(9)` so that
-mmap and `read(2)`/`write(2)` share pages.  Directory listings are fetched
+64 KiB blocks, pages are handed to the host directly (HGCM page lists), and
+`VOP_GETPAGES` uses `vfs_bio_getpages(9)` so that mmap and
+`read(2)`/`write(2)` share pages.  Writes are written behind the way the NFS
+client does it: a complete 64 KiB block goes to the host at once, a partial
+one stays dirty until a later write completes it, `close(2)`, `fsync(2)`,
+`msync(2)`, or the syncer, which is asked to come by within
+`vfs.vboxvfs.writedelay` seconds (default 1); mounting with `-o sync` makes
+every `write(2)` reach the host before it returns.  Directory listings are fetched
 whole and cached per open.  Rename, rmdir and remove keep the name cache in
 step (`cache_vop_rename(9)`, `cache_vop_rmdir(9)`); unlinked files stay usable
 while open.  Details and the reasons behind them are in the worklog (below).
@@ -101,6 +106,10 @@ limits.
 - Changes made on the host become visible after the ttl; a read racing with
   a host side truncate can return the new bytes followed by zeros, as with any
   attribute cache (NFS behaves the same).
+- Data written by the guest reaches the host within about a second (or at
+  `close(2)`, whichever comes first); a guest panic or power-off loses what
+  was not yet flushed, as with any write-behind cache.  Mount with `-o sync`
+  where every `write(2)` must be on the host before it returns.
 
 ## Worklog
 

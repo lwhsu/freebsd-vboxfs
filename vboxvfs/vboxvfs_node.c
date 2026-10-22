@@ -249,10 +249,11 @@ vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info,
     const struct vboxvfs_issued *is)
 {
 	struct vnode *vp;
+	SHFLFSOBJINFO kept;
 	sbintime_t now;
 	uint64_t newsize, oldsize;
 	int64_t oldmtime;
-	bool changed, modified, trust;
+	bool behind, changed, modified, trust;
 
 	vp = VBOXVFSTOV(np);
 	now = getsbinuptime();
@@ -269,14 +270,33 @@ vboxvfs_node_update(struct vboxvfs_node *np, const SHFLFSOBJINFO *info,
 	 * applied once the write finished (it waits for the vnode lock the
 	 * writer holds) used to shrink the VM object under a shared mapping,
 	 * and the next access faulted with SIGBUS.
+	 *
+	 * Nor while the data path is opening a host handle for a locked buffer
+	 * (vn_inio): dropping the cache or resizing the object from there would
+	 * wait for that very buffer.
 	 */
-	trust = np->vn_inflight == 0 && (is == NULL ||
-	    (!is->vi_inflight && np->vn_modtime < is->vi_time));
+	BO_LOCK(&vp->v_bufobj);
+	behind = vp->v_bufobj.bo_dirty.bv_cnt > 0 ||
+	    vp->v_bufobj.bo_numoutput > 0;
+	BO_UNLOCK(&vp->v_bufobj);
+	trust = np->vn_inflight == 0 && np->vn_inio == 0 && !behind &&
+	    (is == NULL || (!is->vi_inflight && np->vn_modtime < is->vi_time));
 	if (!trust) {
 		/*
-		 * Leave the cache as it is, including its age: the next
-		 * revalidation asks the host again with the node known.
+		 * The host is behind our own writes: its size and times are
+		 * not news and ours stay, the rest (mode, owner, link count)
+		 * is as good as it gets.  The age is reset too, so that
+		 * stat(2) during a long write does not ask the host every
+		 * time; the first answer after the data has landed adopts
+		 * everything.
 		 */
+		kept = np->vn_info;
+		np->vn_info = *info;
+		np->vn_info.cbObject = kept.cbObject;
+		np->vn_info.cbAllocated = kept.cbAllocated;
+		np->vn_info.ModificationTime = kept.ModificationTime;
+		np->vn_info.ChangeTime = kept.ChangeTime;
+		np->vn_info_time = now;
 		VBOXVFS_NODE_UNLOCK(np);
 		return;
 	}
@@ -344,17 +364,19 @@ vboxvfs_node_invalattr(struct vboxvfs_node *np)
 }
 
 /*
- * We changed the directory ourselves (created, removed or renamed an
- * entry): bump its cached times so that stat(2) shows the change and mark
- * it modified so that the next refresh adopts the host's values without
- * purging the name cache, which only a foreign change warrants.  Keeping
+ * We changed the object ourselves (wrote to the file, or created, removed
+ * or renamed a directory entry): bump its cached times so that stat(2)
+ * shows the change right away, before the host has seen it when data is
+ * written behind, and mark it modified so that the next refresh adopts the
+ * host's values without purging the name cache or the data, which only a
+ * foreign change warrants.  Keeping
  * the attributes fresh instead of invalidating them spares a lookup of the
  * directory on the host, and the loss of its name cache, at the next lookup
  * in it; with tar(1) extracting a tree that was more than half of all the
  * host requests.
  */
 void
-vboxvfs_node_dirchanged(struct vboxvfs_node *dnp)
+vboxvfs_node_changed(struct vboxvfs_node *dnp)
 {
 	struct timespec ts;
 	int64_t ns;
@@ -565,6 +587,11 @@ vboxvfs_node_issue_child(struct vboxvfs_node *dnp, const char *name,
 		VBOXVFS_NODE_LOCK(np);
 		is->vi_inflight = np->vn_inflight > 0;
 		VBOXVFS_NODE_UNLOCK(np);
+		BO_LOCK(&vp->v_bufobj);
+		if (vp->v_bufobj.bo_dirty.bv_cnt > 0 ||
+		    vp->v_bufobj.bo_numoutput > 0)
+			is->vi_inflight = true;
+		BO_UNLOCK(&vp->v_bufobj);
 		vrele(vp);
 	}
 }
@@ -779,6 +806,14 @@ vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
 		*handlep = np->vn_handle;
 		VBOXVFS_NODE_UNLOCK(np);
 		return (0);
+	}
+	if ((np->vn_flags & VBOXVFS_NODE_STALE) != 0) {
+		/*
+		 * Removed or renamed over: the path may name another file
+		 * by now, and data written behind must not land in it.
+		 */
+		VBOXVFS_NODE_UNLOCK(np);
+		return (ESTALE);
 	}
 	/* Keep what the existing handle has; the new one supersedes it. */
 	access |= np->vn_haccess;

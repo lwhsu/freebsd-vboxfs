@@ -78,10 +78,29 @@ See the
 man page for the generic options such as
 .Cm ro ,
 .Cm noatime ,
-.Cm noexec
+.Cm noexec ,
+.Cm nosuid
 and
-.Cm nosuid ,
+.Cm sync ,
 which are passed through to the kernel.
+.Pp
+Data written in the guest is written behind, the way the NFS client does
+it: a complete 64 KiB block is sent to the host at once, a partial one stays
+in the buffer cache until a later write completes it,
+.Xr close 2 ,
+.Xr fsync 2
+or
+.Xr msync 2 ,
+or until the syncer flushes it, which it is asked to do within
+.Va vfs.vboxvfs.writedelay
+seconds
+.Pq default 1 .
+With the
+.Cm sync
+option every
+.Xr write 2
+reaches the host before it returns.
+.Pp
 The following options are specific to
 .Nm vboxvfs :
 .Bl -tag -width "file_mode=mode"
@@ -182,7 +201,12 @@ VBoxManage setextradata <vm> \\
 Changes made on the host side are only noticed when the cached attributes
 expire
 .Pq see the Cm ttl No option ;
-data written by the guest is sent to the host immediately.
+data written by the guest reaches the host within about a second, or at
+.Xr close 2 ,
+whichever comes first, unless the file system is mounted with
+.Cm sync .
+A guest that panics or is powered off loses what was not yet flushed, as
+with any write-behind cache.
 .Pp
 On a Windows host, a file that is open in the guest cannot be removed or
 renamed, and file names are not case sensitive.
