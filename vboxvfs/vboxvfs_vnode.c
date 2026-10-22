@@ -592,11 +592,14 @@ vboxvfs_readdir(struct vop_readdir_args *ap)
 			return (error);
 		}
 	}
-	if (idx > np->vn_dircnt) {
-		sx_xunlock(&np->vn_dirsx);
-		vboxvfs_dirheld_release(&held);
-		return (EINVAL);
-	}
+	/*
+	 * An offset past the end means the listing was refilled shorter than
+	 * it was when the caller obtained the offset (entries were removed on
+	 * the host or by another process meanwhile): report end of directory,
+	 * as ufs does for a stale offset, not an error.
+	 */
+	if (idx > np->vn_dircnt)
+		idx = np->vn_dircnt;
 
 	/* How many entries fit? */
 	resid = uio->uio_resid;
