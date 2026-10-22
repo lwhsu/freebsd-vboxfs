@@ -484,11 +484,26 @@ vboxvfs_node_freedir(struct vboxvfs_node *np)
 void
 vboxvfs_node_free(struct vboxvfs_node *np)
 {
+	struct vboxvfs_node *dnp;
 
 	KASSERT(np->vn_handle == SHFL_HANDLE_NIL,
 	    ("vboxvfs_node_free: host handle still open"));
-	if (np->vn_flags & VBOXVFS_NODE_REFPARENT)
-		vrele(VBOXVFSTOV(np->vn_parent));
+	if (np->vn_flags & VBOXVFS_NODE_REFPARENT) {
+		/*
+		 * Dropping the reference may inactivate the parent, and if
+		 * the parent is stale vboxvfs_inactive() would recycle it
+		 * right here, whose reclaim would do the same to its parent:
+		 * a tree removed bottom up unwound as a recursion as deep as
+		 * the tree and overflowed the kernel stack (stress2's mkdir
+		 * test, 100 levels).  Ask the parent's inactive to leave the
+		 * recycling to vnlru this once.
+		 */
+		dnp = np->vn_parent;
+		VBOXVFS_NODE_LOCK(dnp);
+		dnp->vn_flags |= VBOXVFS_NODE_NORECYCLE;
+		VBOXVFS_NODE_UNLOCK(dnp);
+		vrele(VBOXVFSTOV(dnp));
+	}
 	vboxvfs_node_freedir(np);
 	free(np->vn_name, M_VBOXVFS);
 	sx_destroy(&np->vn_dirsx);

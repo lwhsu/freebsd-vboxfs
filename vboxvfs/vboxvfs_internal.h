@@ -155,6 +155,9 @@ struct vboxvfs_node {
 #define	VBOXVFS_NODE_MODIFIED	0x0010	/* we wrote since the last revalidate;
 					   do not drop the cache on the next
 					   host mtime change */
+#define	VBOXVFS_NODE_NORECYCLE	0x0020	/* inactive: leave the recycling to
+					   vnlru this once, see
+					   vboxvfs_node_free() */
 
 #define	VFSTOVBOXVFS(mp)	((struct vboxvfs_mount *)((mp)->mnt_data))
 #define	VTOVBOXVFS(vp)		((struct vboxvfs_node *)((vp)->v_data))

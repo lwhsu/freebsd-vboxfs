@@ -652,12 +652,14 @@ vboxvfs_inactive(struct vop_inactive_args *ap)
 {
 	struct vboxvfs_node *np;
 	struct vnode *vp;
-	bool stale;
+	bool norecycle, stale;
 
 	vp = ap->a_vp;
 	np = VTOVBOXVFS(vp);
 	VBOXVFS_NODE_LOCK(np);
 	stale = (np->vn_flags & VBOXVFS_NODE_STALE) != 0;
+	norecycle = (np->vn_flags & VBOXVFS_NODE_NORECYCLE) != 0;
+	np->vn_flags &= ~VBOXVFS_NODE_NORECYCLE;
 	VBOXVFS_NODE_UNLOCK(np);
 	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "inactive ino %ju stale %d\n",
 	    (uintmax_t)np->vn_ino, stale);
@@ -666,7 +668,12 @@ vboxvfs_inactive(struct vop_inactive_args *ap)
 	 * that the host (Windows in particular) can delete or rename it.
 	 */
 	vboxvfs_node_closehandle(np);
-	if (stale)
+	/*
+	 * A stale node (removed, renamed over) is recycled right away so that
+	 * its name can get a fresh node; not when this inactivation comes from
+	 * a child's reclaim, see vboxvfs_node_free().
+	 */
+	if (stale && !norecycle)
 		vrecycle(vp);
 	return (0);
 }
