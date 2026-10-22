@@ -12,6 +12,10 @@
 #
 set -u
 MNT=${1:-/mnt/share}
+if ! mount -p | awk -v m="$MNT" '$2 == m && $3 == "vboxvfs" { found = 1 } END { exit !found }'; then
+	echo "$0: $MNT is not a mounted vboxvfs file system; refusing to run" >&2
+	exit 2
+fi
 T=$MNT/smoke-modify
 fail=0
 

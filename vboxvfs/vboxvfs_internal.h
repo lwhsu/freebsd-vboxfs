@@ -146,6 +146,9 @@ struct vboxvfs_node {
 #define	VBOXVFS_NODE_STALE	0x0004	/* removed, or replaced by rename;
 					   recycle when inactive */
 #define	VBOXVFS_NODE_UNHASHED	0x0008	/* already taken out of vfs_hash */
+#define	VBOXVFS_NODE_MODIFIED	0x0010	/* we wrote since the last revalidate;
+					   do not drop the cache on the next
+					   host mtime change */
 
 #define	VFSTOVBOXVFS(mp)	((struct vboxvfs_mount *)((mp)->mnt_data))
 #define	VTOVBOXVFS(vp)		((struct vboxvfs_node *)((vp)->v_data))
@@ -200,6 +203,11 @@ int	vboxvfs_host_symlink(struct vboxvfs_mount *vmp, const char *path,
 	    SHFLFSOBJINFO *info);
 int	vboxvfs_host_setsize(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
 	    uint64_t size);
+int	vboxvfs_host_read(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
+	    off_t off, struct buf *bp, u_int bufoff, size_t len, size_t *donep);
+int	vboxvfs_host_write(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
+	    off_t off, struct buf *bp, u_int bufoff, size_t len, size_t *donep);
+int	vboxvfs_host_flush(struct vboxvfs_mount *vmp, SHFLHANDLE handle);
 int	vboxvfs_host_lastfn(void);
 uint32_t vboxvfs_host_features(void);
 
@@ -244,6 +252,14 @@ mode_t	vboxvfs_mode(struct vboxvfs_mount *vmp, __enum_uint8(vtype) type,
  * vboxvfs_vnode.c
  */
 extern struct vop_vector vboxvfs_vnodeops;
+
+/*
+ * vboxvfs_io.c -- data path through the buffer cache.
+ */
+vop_read_t	vboxvfs_read;
+vop_write_t	vboxvfs_write;
+vop_fsync_t	vboxvfs_fsync;
+vop_strategy_t	vboxvfs_strategy;
 
 /*
  * Time conversion: the host uses nanoseconds since the Unix epoch.

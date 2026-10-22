@@ -13,6 +13,7 @@
 #include <sys/bio.h>
 #include <sys/buf.h>
 #include <sys/dirent.h>
+#include <sys/fcntl.h>
 #include <sys/limits.h>
 #include <sys/namei.h>
 #include <sys/proc.h>
@@ -41,7 +42,6 @@ static vop_remove_t	vboxvfs_remove;
 static vop_rename_t	vboxvfs_rename;
 static vop_rmdir_t	vboxvfs_rmdir;
 static vop_setattr_t	vboxvfs_setattr;
-static vop_strategy_t	vboxvfs_strategy;
 static vop_symlink_t	vboxvfs_symlink;
 
 struct vop_vector vboxvfs_vnodeops = {
@@ -51,6 +51,7 @@ struct vop_vector vboxvfs_vnodeops = {
 	.vop_cachedlookup =	vboxvfs_cachedlookup,
 	.vop_close =		vboxvfs_close,
 	.vop_create =		vboxvfs_create,
+	.vop_fsync =		vboxvfs_fsync,
 	.vop_getattr =		vboxvfs_getattr,
 	.vop_inactive =		vboxvfs_inactive,
 	.vop_lookup =		vboxvfs_lookup,
@@ -65,7 +66,9 @@ struct vop_vector vboxvfs_vnodeops = {
 	.vop_rename =		vboxvfs_rename,
 	.vop_rmdir =		vboxvfs_rmdir,
 	.vop_setattr =		vboxvfs_setattr,
+	.vop_read =		vboxvfs_read,
 	.vop_strategy =		vboxvfs_strategy,
+	.vop_write =		vboxvfs_write,
 	.vop_symlink =		vboxvfs_symlink,
 };
 VFS_VOP_VECTOR_REGISTER(vboxvfs_vnodeops);
@@ -286,6 +289,7 @@ vboxvfs_open(struct vop_open_args *ap)
 {
 	struct vboxvfs_node *np;
 	struct vnode *vp;
+	SHFLHANDLE handle;
 	uint64_t size;
 	int error;
 
@@ -298,6 +302,17 @@ vboxvfs_open(struct vop_open_args *ap)
 	error = vboxvfs_node_revalidate(np, true);
 	if (error != 0)
 		return (error);
+	/*
+	 * Open the host handle now with the access that was asked for, so
+	 * that e.g. O_WRONLY on a file the host will not let us write fails
+	 * here and not at the first write.
+	 */
+	if (vp->v_type == VREG) {
+		error = vboxvfs_node_handle(np, (ap->a_mode & FWRITE) ?
+		    SHFL_CF_ACCESS_WRITE : SHFL_CF_ACCESS_READ, &handle);
+		if (error != 0)
+			return (error);
+	}
 	VBOXVFS_NODE_LOCK(np);
 	size = np->vn_size;
 	np->vn_opencnt++;
@@ -711,22 +726,6 @@ vboxvfs_print(struct vop_print_args *ap)
 	    "flags %#x, size %ju\n", (uintmax_t)np->vn_ino, np->vn_name,
 	    (uintmax_t)np->vn_handle, np->vn_opencnt, np->vn_flags,
 	    (uintmax_t)np->vn_size);
-	return (0);
-}
-
-/*
- * The buffer cache path is not implemented yet; fail cleanly instead of
- * falling into vop_nostrategy().
- */
-static int
-vboxvfs_strategy(struct vop_strategy_args *ap)
-{
-	struct buf *bp;
-
-	bp = ap->a_bp;
-	bp->b_ioflags |= BIO_ERROR;
-	bp->b_error = EOPNOTSUPP;
-	bufdone(bp);
 	return (0);
 }
 
@@ -1231,6 +1230,7 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 	struct ucred *cred;
 	SHFLFSOBJINFO info;
 	SHFLHANDLE handle;
+	uint64_t oldsize;
 	int error;
 	bool rdonly;
 
@@ -1283,8 +1283,12 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 		if (error != 0)
 			return (error);
 		VBOXVFS_NODE_LOCK(np);
+		oldsize = np->vn_size;
 		np->vn_size = vap->va_size;
+		np->vn_flags |= VBOXVFS_NODE_MODIFIED;
 		VBOXVFS_NODE_UNLOCK(np);
+		if (vap->va_size < oldsize)
+			(void)vtruncbuf(vp, vap->va_size, vmp->vm_biosize);
 		vnode_pager_setsize(vp, vap->va_size);
 		vboxvfs_node_invalattr(np);
 	}

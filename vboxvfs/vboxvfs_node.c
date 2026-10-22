@@ -18,6 +18,9 @@
 #include <sys/stat.h>
 #include <sys/sx.h>
 
+#include <vm/vm.h>
+#include <vm/vm_extern.h>
+
 extern struct sx vboxvfs_rename_lock;
 
 struct vboxvfs_cmparg {
@@ -256,7 +259,7 @@ vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force)
 	uint64_t oldsize;
 	int64_t oldmtime;
 	int error;
-	bool changed;
+	bool changed, modified;
 
 	vp = VBOXVFSTOV(np);
 	vmp = np->vn_vmp;
@@ -301,6 +304,8 @@ vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force)
 	VBOXVFS_NODE_LOCK(np);
 	oldsize = np->vn_size;
 	oldmtime = np->vn_mtime_ns;
+	modified = (np->vn_flags & VBOXVFS_NODE_MODIFIED) != 0;
+	np->vn_flags &= ~VBOXVFS_NODE_MODIFIED;
 	np->vn_info = info;
 	np->vn_info_time = sbinuptime();
 	if (np->vn_info_time == 0)
@@ -310,9 +315,20 @@ vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force)
 	changed = oldsize != np->vn_size || oldmtime != np->vn_mtime_ns;
 	VBOXVFS_NODE_UNLOCK(np);
 
-	if (changed && vp->v_type == VDIR)
-		cache_purge(vp);
-	/* XXX Phase 3: VREG changed -> vinvalbuf + vnode_pager_setsize. */
+	if (changed) {
+		if (vp->v_type == VDIR)
+			cache_purge(vp);
+		else if (vp->v_type == VREG) {
+			/*
+			 * Somebody else changed the file: drop the cached
+			 * pages (writing back anything dirty first).  If the
+			 * change is our own write-through, keep them.
+			 */
+			if (!modified)
+				(void)vinvalbuf(vp, V_SAVE, 0, 0);
+			vnode_pager_setsize(vp, info.cbObject);
+		}
+	}
 	return (0);
 }
 

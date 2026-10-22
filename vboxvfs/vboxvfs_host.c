@@ -14,7 +14,12 @@
 
 #include "vboxvfs_internal.h"
 
+#include <sys/bio.h>
+#include <sys/buf.h>
 #include <sys/stat.h>
+
+#include <vm/vm.h>
+#include <vm/vm_page.h>
 
 #include <iprt/err.h>
 #include <VBox/err.h>
@@ -29,6 +34,9 @@ VBGLSFCLIENT g_SfClient;
 uint32_t g_fHostFeatures;
 
 static uint64_t vboxvfs_sffeatures;
+static int vboxvfs_nobounce = 0;
+SYSCTL_INT(_vfs_vboxvfs, OID_AUTO, nobounce, CTLFLAG_RDTUN, &vboxvfs_nobounce, 0,
+    "Use no-bounce HGCM page lists when the host offers them (tunable)");
 static uint32_t vboxvfs_sflastfn;
 static bool vboxvfs_connected;
 
@@ -169,6 +177,15 @@ vboxvfs_host_init(void)
 		    "VbglR0QueryHostFeatures: %d (ignored)\n", vrc);
 		g_fHostFeatures = 0;
 	}
+	/*
+	 * With VMMDEV_HVF_HGCM_NO_BOUNCE_PAGE_LIST the inline request builders
+	 * hand the host our pages for direct access.  A FreeBSD 7.2.20 host
+	 * answers every such read or write with VERR_INTERNAL_ERROR (plain
+	 * page lists, where the host copies, work), so the feature is off
+	 * unless the vfs.vboxvfs.nobounce tunable asks for it.
+	 */
+	if (vboxvfs_nobounce == 0)
+		g_fHostFeatures &= ~VMMDEV_HVF_HGCM_NO_BOUNCE_PAGE_LIST;
 	/* Must come after the VMMDev query, it falls back on it. */
 	(void)VbglR0SfHostReqQueryFeaturesSimple(&vboxvfs_sffeatures,
 	    &vboxvfs_sflastfn);
@@ -562,5 +579,125 @@ vboxvfs_host_setsize(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
 	vrc = VbglR0SfHostReqSetFileSizeSimple(vmp->vm_root, handle, size);
 	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "SET_FILE_SIZE %#jx %ju: %d\n",
 	    (uintmax_t)handle, (uintmax_t)size, vrc);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+/*
+ * Data transfer.  The buffer's pages are handed to the host as a page list
+ * (no copy); a buffer without pages goes through a physically contiguous
+ * bounce buffer from the physical heap.  bufoff is the offset of the
+ * transfer within the buffer, off the offset in the file.
+ */
+static int
+vboxvfs_host_xfer(struct vboxvfs_mount *vmp, SHFLHANDLE handle, off_t off,
+    struct buf *bp, u_int bufoff, size_t len, size_t *donep, bool write)
+{
+	VBOXSFREADPGLSTREQ *rreq;
+	VBOXSFWRITEPGLSTREQ *wreq;
+	HGCMPageListInfo *pglst;
+	RTGCPHYS64 phys;
+	char *bounce;
+	u_int first, npages, offpage, i;
+	int vrc;
+
+	*donep = 0;
+	if (len == 0)
+		return (0);
+	if (len > UINT32_MAX)
+		return (EINVAL);
+	bounce = NULL;
+	offpage = bufoff & PAGE_MASK;
+	npages = howmany(offpage + len, PAGE_SIZE);
+	if (bp->b_npages == 0) {
+		bounce = VbglR0PhysHeapAlloc(len);
+		if (bounce == NULL)
+			return (ENOMEM);
+		if (write)
+			bcopy(bp->b_data + bufoff, bounce, len);
+		phys = VbglR0PhysHeapGetPhysAddr(bounce);
+		offpage = phys & PAGE_MASK;
+		npages = howmany(offpage + len, PAGE_SIZE);
+	}
+	if (write) {
+		wreq = VbglR0PhysHeapAlloc(RT_UOFFSETOF_DYN(VBOXSFWRITEPGLSTREQ,
+		    PgLst.aPages[npages]));
+		rreq = NULL;
+		pglst = wreq != NULL ? &wreq->PgLst : NULL;
+	} else {
+		rreq = VbglR0PhysHeapAlloc(RT_UOFFSETOF_DYN(VBOXSFREADPGLSTREQ,
+		    PgLst.aPages[npages]));
+		wreq = NULL;
+		pglst = rreq != NULL ? &rreq->PgLst : NULL;
+	}
+	if (pglst == NULL) {
+		vboxvfs_host_free(bounce);
+		return (ENOMEM);
+	}
+	pglst->offFirstPage = offpage;
+	if (bounce != NULL) {
+		phys &= ~(RTGCPHYS64)PAGE_MASK;
+		for (i = 0; i < npages; i++)
+			pglst->aPages[i] = phys + (RTGCPHYS64)i * PAGE_SIZE;
+	} else {
+		first = bufoff / PAGE_SIZE;
+		KASSERT(first + npages <= (u_int)bp->b_npages,
+		    ("vboxvfs_host_xfer: %u+%u pages > %d", first, npages,
+		    bp->b_npages));
+		for (i = 0; i < npages; i++)
+			pglst->aPages[i] = VM_PAGE_TO_PHYS(bp->b_pages[first + i]);
+	}
+	if (write) {
+		vrc = VbglR0SfHostReqWritePgLst(vmp->vm_root, wreq, handle, off,
+		    len, npages);
+		if (RT_SUCCESS(vrc))
+			*donep = wreq->Parms.cb32Write.u.value32;
+		VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST,
+		    "WRITE %#jx off %jd len %zu pages %u: %d done %zu\n",
+		    (uintmax_t)handle, (intmax_t)off, len, npages, vrc, *donep);
+		VbglR0PhysHeapFree(wreq);
+	} else {
+		vrc = VbglR0SfHostReqReadPgLst(vmp->vm_root, rreq, handle, off,
+		    len, npages);
+		if (RT_SUCCESS(vrc))
+			*donep = rreq->Parms.cb32Read.u.value32;
+		VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST,
+		    "READ %#jx off %jd len %zu pages %u: %d done %zu\n",
+		    (uintmax_t)handle, (intmax_t)off, len, npages, vrc, *donep);
+		VbglR0PhysHeapFree(rreq);
+		if (RT_SUCCESS(vrc) && bounce != NULL)
+			bcopy(bounce, bp->b_data + bufoff, *donep);
+	}
+	vboxvfs_host_free(bounce);
+	if (RT_SUCCESS(vrc) && *donep > len)
+		*donep = len;
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+int
+vboxvfs_host_read(struct vboxvfs_mount *vmp, SHFLHANDLE handle, off_t off,
+    struct buf *bp, u_int bufoff, size_t len, size_t *donep)
+{
+
+	return (vboxvfs_host_xfer(vmp, handle, off, bp, bufoff, len, donep,
+	    false));
+}
+
+int
+vboxvfs_host_write(struct vboxvfs_mount *vmp, SHFLHANDLE handle, off_t off,
+    struct buf *bp, u_int bufoff, size_t len, size_t *donep)
+{
+
+	return (vboxvfs_host_xfer(vmp, handle, off, bp, bufoff, len, donep,
+	    true));
+}
+
+int
+vboxvfs_host_flush(struct vboxvfs_mount *vmp, SHFLHANDLE handle)
+{
+	int vrc;
+
+	vrc = VbglR0SfHostReqFlushSimple(vmp->vm_root, handle);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "FLUSH %#jx: %d\n",
+	    (uintmax_t)handle, vrc);
 	return (vboxvfs_vrc2errno(vrc));
 }
