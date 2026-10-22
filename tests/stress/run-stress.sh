@@ -21,15 +21,15 @@ pid=$(pgrep -f "VBoxHeadless.*--comment $VM " | head -1)
 } > "$OUT/host-baseline.txt" 2>&1
 con=$HOME/vboxfs/vm/$VM-console.log; conlines=$( [ -f "$con" ] && wc -l < "$con" || echo 0 )
 vlog=$HOME/vboxfs/vm/$VM/Logs/VBox.log; vlines=$( [ -f "$vlog" ] && wc -l < "$vlog" || echo 0 )
-mkdir -p "$SHARE/churn"
-sh "$HERE/host-churn.sh" "$SHARE/churn" $((SECS + 10)) > "$OUT/host-churn.log" 2>&1 & churn=$!
+mkdir -p "$SHARE/churn-$VM"
+sh "$HERE/host-churn.sh" "$SHARE/churn-$VM" $((SECS + 10)) > "$OUT/host-churn.log" 2>&1 & churn=$!
 echo "$(date -u +%T) guest run starting" | tee "$OUT/run.log"
-$SSH "rm -rf /root/stress-logs/current; sh $TREE/tests/stress/stress-10min.sh $MNT $SECS /root/stress-logs/current; echo GUEST-RC=\$?" 2>&1 | LC_ALL=C tr -cd '\11\12\15\40-\176' | tee -a "$OUT/run.log"
+$SSH "rm -rf /root/stress-logs/current; env TAG=$VM sh $TREE/tests/stress/stress-10min.sh $MNT $SECS /root/stress-logs/current; echo GUEST-RC=\$?" 2>&1 | LC_ALL=C tr -cd '\11\12\15\40-\176' | tee -a "$OUT/run.log"
 rc=$(sed -n 's/^GUEST-RC=//p' "$OUT/run.log" | tail -1); rc=${rc:-1}
 echo "$(date -u +%T) guest run finished, rc=$rc" | tee -a "$OUT/run.log"
 wait $churn; cat "$OUT/host-churn.log"
 scp -q -r "$VM:/root/stress-logs/current/" "$OUT/guest-logs" 2>&1
-rm -rf "$SHARE/churn"
+rm -rf "$SHARE/churn-$VM"
 {
 	echo "== $(date -u) host after =="
 	[ -n "$pid" ] && { echo "VBoxHeadless open files: $(procstat -f $pid 2>/dev/null | wc -l | tr -d ' ')"; ps -o rss,vsz,%cpu -p $pid; }

@@ -31,8 +31,11 @@ while [ "$(date +%s)" -lt $end ]; do
 	# are only counted; two different non-zero bytes in one read would mean
 	# old and new content got mixed, which is a cache bug.
 	if [ -s "$DIR/inplace.dat" ]; then
-		kinds=$(head -c 7000 "$DIR/inplace.dat" | tr -d '\n\000' | fold -w1 | sort -u | wc -l)
-		zeros=$(head -c 7000 "$DIR/inplace.dat" | tr -cd '\000' | wc -c)
+		# one read(2) of the whole file (head -c would issue several and
+		# could legitimately see two versions)
+		dd if="$DIR/inplace.dat" bs=16k count=1 2>/dev/null > /tmp/gw.inplace
+		kinds=$(tr -d '\n\000' < /tmp/gw.inplace | fold -w1 | sort -u | wc -l)
+		zeros=$(tr -cd '\000' < /tmp/gw.inplace | wc -c)
 		[ "$zeros" -gt 0 ] && torn=$((torn + 1))
 		[ "$kinds" -gt 1 ] && { bad=$((bad + 1)); echo "inplace.dat: $kinds different non-zero bytes at $(date -u +%T)"; }
 	fi

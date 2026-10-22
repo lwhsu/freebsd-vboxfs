@@ -15,10 +15,12 @@
 # usage: stress-10min.sh MNT SECONDS [LOGDIR]
 # env: FSX (default /root/fsx), STRESS2 (default /root/stress2),
 #      GITURL (default git://10.0.2.2/pjdfstest), TTLMS (default 200),
+#      TAG (suffix of the directories used on the share, default the host
+#      name, so that two guests of one host can run at the same time),
 #      NO_UNMOUNT=1 to leave the share mounted at the end
 MNT=${1:?mount point}; SECS=${2:?seconds}; LOGDIR=${3:-/root/stress-logs/$(date -u +%Y%m%dT%H%M%SZ)}
 FSX=${FSX:-/root/fsx}; STRESS2=${STRESS2:-/root/stress2}; GITURL=${GITURL:-git://10.0.2.2/pjdfstest}
-TTLMS=${TTLMS:-200}
+TTLMS=${TTLMS:-200}; TAG=${TAG:-$(hostname -s)}
 HERE=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$LOGDIR" || exit 1
 log() { echo "$(date -u +%T) $*" | tee -a "$LOGDIR/summary.txt"; }
@@ -32,8 +34,8 @@ n=$(mount -t vboxvfs | grep -c " on $MNT ")
 for t in creat mkdir rename dirrename rw mmap fts symlink openat; do
 	[ -x "$STRESS2/testcases/$t/$t" ] || { echo "no stress2 binary $STRESS2/testcases/$t/$t" >&2; exit 2; }
 done
-W=$MNT/stress-work
-rm -rf "$W" "$MNT/stressX" 2>/dev/null; mkdir -p "$W" "$MNT/stressX" "$MNT/churn" || exit 2
+W=$MNT/stress-work-$TAG; X=$X-$TAG; CH=$MNT/churn-$TAG
+rm -rf "$W" "$X" 2>/dev/null; mkdir -p "$W" "$X" "$CH" || exit 2
 ln -s /nonexistent "$W/probe-symlink" 2>/dev/null && rm "$W/probe-symlink" && symlinks=yes || symlinks=no
 
 # --- baseline --------------------------------------------------------------
@@ -62,7 +64,7 @@ fsx_loop fsx-nomap "-R -W" 2000 & p_fsx2=$!
 
 # --- stress2 ---------------------------------------------------------------
 rm -rf /tmp/s2.* 2>/dev/null
-S2C="-t ${SECS}s -l 100 -n -h -v -v -d $MNT/stressX"
+S2C="-t ${SECS}s -l 100 -n -h -v -v -d $X"
 s2() {	# $1 = test, $2 = incarnations, $3 = KBLOCKS, $4 = INODES
 	( cd "$STRESS2/testcases" && env CTRLDIR=/tmp/s2.$1 KBLOCKS=$3 INODES=$4 "$1/$1" $S2C -i $2 > "$LOGDIR/s2-$1.log" 2>&1; echo "rc=$?" >> "$LOGDIR/s2-$1.log" ) &
 	eval "p_s2_$1=$!"
@@ -101,7 +103,7 @@ workload() {
 workload & p_wl=$!
 
 # --- host/guest concurrency watcher ---------------------------------------
-sh "$HERE/guest-watch.sh" "$MNT/churn" $((SECS - 5)) $TTLMS > "$LOGDIR/guest-watch.log" 2>&1 & p_watch=$!
+sh "$HERE/guest-watch.sh" "$CH" $((SECS - 5)) $TTLMS > "$LOGDIR/guest-watch.log" 2>&1 & p_watch=$!
 
 # --- wait ------------------------------------------------------------------
 wait $p_fsx1; r=$?; log "fsx-mmap: $(cat "$LOGDIR/fsx-mmap.status" 2>/dev/null) (rc $r)"; [ $r -eq 0 ] || problem "fsx-mmap failed"
@@ -135,9 +137,9 @@ for t in creat mkdir rename dirrename rw mmap fts openat symlink; do
 	case "$size" in size=0) problem "stress2 $t did nothing (size 0)";; esac
 	[ $odd -eq 0 ] || problem "stress2 $t printed $odd unexpected lines (see s2-$t.log)"
 done
-left=$(ls -A "$MNT/stressX" 2>/dev/null | wc -l | tr -d ' ')
+left=$(ls -A "$X" 2>/dev/null | wc -l | tr -d ' ')
 [ "$left" -eq 0 ] || problem "stressX not empty afterwards ($left entries)"
-rm -rf "$W" "$MNT/stressX" 2>/dev/null
+rm -rf "$W" "$X" 2>/dev/null
 
 # --- after -----------------------------------------------------------------
 {
