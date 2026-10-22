@@ -163,6 +163,24 @@ vboxvfs_cachedlookup(struct vop_cachedlookup_args *ap)
 	if (cnp->cn_namelen > vmp->vm_namemax)
 		return (ENAMETOOLONG);
 
+	/*
+	 * namei(9) does not take the last component of a DELETE or RENAME
+	 * from the name cache; our own node will do if its attributes are
+	 * within the ttl, the removal or rename asks the host anyway.
+	 */
+	if (islast && (nameiop == DELETE || nameiop == RENAME)) {
+		vp = vboxvfs_node_fresh(dnp, cnp->cn_nameptr, cnp->cn_namelen);
+		if (vp != NULL) {
+			error = VOP_ACCESS(dvp, VWRITE, cnp->cn_cred, curthread);
+			if (error != 0) {
+				vput(vp);
+				return (error);
+			}
+			*ap->a_vpp = vp;
+			return (0);
+		}
+	}
+
 	error = vboxvfs_node_childpath(dnp, cnp->cn_nameptr, cnp->cn_namelen,
 	    &path, &pathlen);
 	if (error != 0)
@@ -299,7 +317,7 @@ vboxvfs_open(struct vop_open_args *ap)
 	SHFLHANDLE handle;
 	uint64_t size;
 	int error;
-	bool opened;
+	bool fresh, opened;
 
 	vp = ap->a_vp;
 	np = VTOVBOXVFS(vp);
@@ -322,9 +340,16 @@ vboxvfs_open(struct vop_open_args *ap)
 			return (error);
 	}
 	if (!opened) {
-		error = vboxvfs_node_revalidate(np, true);
-		if (error != 0)
-			return (error);
+		/* Fetched this very tick (just created or looked up)? */
+		VBOXVFS_NODE_LOCK(np);
+		fresh = np->vn_info_time != 0 &&
+		    getsbinuptime() == np->vn_info_time;
+		VBOXVFS_NODE_UNLOCK(np);
+		if (!fresh) {
+			error = vboxvfs_node_revalidate(np, true);
+			if (error != 0)
+				return (error);
+		}
 	}
 	VBOXVFS_NODE_LOCK(np);
 	size = np->vn_size;

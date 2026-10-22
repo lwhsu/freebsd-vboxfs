@@ -570,6 +570,41 @@ vboxvfs_node_issue_child(struct vboxvfs_node *dnp, const char *name,
 }
 
 /*
+ * The node for NAME in DNP if we have one whose attributes are younger
+ * than the ttl and that is not stale, locked exclusively; NULL otherwise.
+ * Lets a lookup that the name cache will not serve (namei bypasses it for
+ * the last component of DELETE and RENAME) still avoid a host round trip:
+ * the operation that follows asks the host anyway.
+ */
+struct vnode *
+vboxvfs_node_fresh(struct vboxvfs_node *dnp, const char *name, u_int namelen)
+{
+	struct vboxvfs_cmparg ca;
+	struct vboxvfs_node *np;
+	struct vnode *vp;
+	bool fresh;
+
+	ca.parent = dnp;
+	ca.name = name;
+	ca.namelen = namelen;
+	if (vfs_hash_get(dnp->vn_vmp->vm_mp, vboxvfs_node_hash(dnp, name,
+	    namelen), LK_EXCLUSIVE, curthread, &vp, vboxvfs_vnode_cmp,
+	    &ca) != 0 || vp == NULL)
+		return (NULL);
+	np = VTOVBOXVFS(vp);
+	VBOXVFS_NODE_LOCK(np);
+	fresh = (np->vn_flags & VBOXVFS_NODE_STALE) == 0 &&
+	    np->vn_info_time != 0 &&
+	    getsbinuptime() - np->vn_info_time < dnp->vn_vmp->vm_ttl;
+	VBOXVFS_NODE_UNLOCK(np);
+	if (!fresh) {
+		vput(vp);
+		return (NULL);
+	}
+	return (vp);
+}
+
+/*
  * Find or create the node for <dvp>/<name>.  dvp is NULL for the root.
  * info must be given to create a node; without it only an existing one is
  * returned (ENOENT otherwise).  The vnode is returned locked exclusively
