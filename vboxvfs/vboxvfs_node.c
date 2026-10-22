@@ -20,6 +20,7 @@
 
 #include <vm/vm.h>
 #include <vm/vm_extern.h>
+#include <vm/vm_object.h>
 
 extern struct sx vboxvfs_rename_lock;
 
@@ -326,7 +327,7 @@ vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force)
 			 */
 			if (!modified)
 				(void)vinvalbuf(vp, V_SAVE, 0, 0);
-			vnode_pager_setsize(vp, info.cbObject);
+			vboxvfs_node_setsize(vp, info.cbObject);
 		}
 	}
 	return (0);
@@ -730,4 +731,25 @@ vboxvfs_node_isunder(struct vboxvfs_node *np, struct vboxvfs_node *ancestor)
 	}
 	sx_sunlock(&vboxvfs_rename_lock);
 	return (found);
+}
+
+/*
+ * Tell the vnode pager about a new file size.  vnode_pager_setsize() wants
+ * the vnode locked exclusively; from a shared-locked path (getattr during
+ * mmap, for instance) leave a note and the VFS calls VOP_DELAYED_SETSIZE
+ * when the vnode is next locked exclusively, as nfsclient does.
+ */
+void
+vboxvfs_node_setsize(struct vnode *vp, uint64_t nsize)
+{
+	vm_object_t object;
+
+	object = vp->v_object;
+	if (object == NULL || nsize == object->un_pager.vnp.vnp_size)
+		return;
+	if (VOP_ISLOCKED(vp) == LK_EXCLUSIVE &&
+	    (curthread->td_pflags2 & TDP2_SBPAGES) == 0)
+		vnode_pager_setsize(vp, nsize);
+	else
+		vn_delayed_setsize(vp);
 }

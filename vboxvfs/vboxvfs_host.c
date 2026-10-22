@@ -35,7 +35,7 @@ VBGLSFCLIENT g_SfClient;
 uint32_t g_fHostFeatures;
 
 static uint64_t vboxvfs_sffeatures;
-static int vboxvfs_nobounce = 0;
+static int vboxvfs_nobounce = 1;
 SYSCTL_INT(_vfs_vboxvfs, OID_AUTO, nobounce, CTLFLAG_RDTUN, &vboxvfs_nobounce, 0,
     "Use no-bounce HGCM page lists when the host offers them (tunable)");
 static uint32_t vboxvfs_sflastfn;
@@ -180,10 +180,10 @@ vboxvfs_host_init(void)
 	}
 	/*
 	 * With VMMDEV_HVF_HGCM_NO_BOUNCE_PAGE_LIST the inline request builders
-	 * hand the host our pages for direct access.  A FreeBSD 7.2.20 host
-	 * answers every such read or write with VERR_INTERNAL_ERROR (plain
-	 * page lists, where the host copies, work), so the feature is off
-	 * unless the vfs.vboxvfs.nobounce tunable asks for it.
+	 * hand the host our pages for direct access instead of having it
+	 * copy; the vfs.vboxvfs.nobounce tunable can turn that off for
+	 * debugging (a bogus page address shows up as VERR_INTERNAL_ERROR
+	 * with no-bounce lists and as silent garbage with plain ones).
 	 */
 	if (vboxvfs_nobounce == 0)
 		g_fHostFeatures &= ~VMMDEV_HVF_HGCM_NO_BOUNCE_PAGE_LIST;

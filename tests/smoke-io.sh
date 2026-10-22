@@ -82,7 +82,7 @@ echo "==> write across block boundaries (64 KiB blocks)"
 dd if="$L/rand1m" of="$T/cross" bs=1 skip=65000 count=2000 2>/dev/null
 dd if="$L/rand1m" of="$T/cross" bs=1 seek=130000 count=5000 conv=notrunc 2>/dev/null
 eq "size cross" 135000 "$(stat -f %z "$T/cross")"
-eq "md5 cross" "$( (dd if="$L/rand1m" bs=1 skip=65000 count=2000; dd if=/dev/zero bs=1 count=128000; dd if="$L/rand1m" bs=1 skip=130000 count=5000) 2>/dev/null | md5 -q)" "$(sum "$T/cross")"
+eq "md5 cross" "$( (dd if="$L/rand1m" bs=1 skip=65000 count=2000; dd if=/dev/zero bs=1 count=128000; dd if="$L/rand1m" bs=1 count=5000) 2>/dev/null | md5 -q)" "$(sum "$T/cross")"
 
 echo "==> tree copy and compare"
 ok cp -R /usr/share/misc "$T/misc"
@@ -130,14 +130,14 @@ int main(int argc, char **argv)
 CEOF
 ok cc -O -o "$L/mm" "$L/mm.c"
 ok "$L/mm" "$T/mmfile"
-eq "mmfile size" 69632 "$(stat -f %z "$T/mmfile")"
+eq "mmfile size (9 pwrites of 8 KiB)" 73728 "$(stat -f %z "$T/mmfile")"
 eq "mmfile bytes 1000-1299 after close" "$(printf 'C%.0s' $(seq 1 300) | md5 -q)" "$(dd if="$T/mmfile" bs=1 skip=1000 count=300 2>/dev/null | md5 -q)"
 eq "mmfile bytes 70000-70009" "DDDDDDDDDD" "$(dd if="$T/mmfile" bs=1 skip=70000 count=10 2>/dev/null)"
 
 echo "==> remount and re-verify (defeats the guest cache)"
 cd / && ok umount "$MNT" && ok mount -t vboxvfs -o uid=0,gid=0 share "$MNT"
 eq "md5 rand100k after remount" "$(sum "$L/rand100k")" "$(sum "$T/rand100k")"
-eq "md5 cross after remount" "$( (dd if="$L/rand1m" bs=1 skip=65000 count=2000; dd if=/dev/zero bs=1 count=128000; dd if="$L/rand1m" bs=1 skip=130000 count=5000) 2>/dev/null | md5 -q)" "$(sum "$T/cross")"
+eq "md5 cross after remount" "$( (dd if="$L/rand1m" bs=1 skip=65000 count=2000; dd if=/dev/zero bs=1 count=128000; dd if="$L/rand1m" bs=1 count=5000) 2>/dev/null | md5 -q)" "$(sum "$T/cross")"
 eq "small after remount" "line 099" "$(sed -n 100p "$T/small")"
 ok diff -r /usr/share/misc "$T/misc"
 

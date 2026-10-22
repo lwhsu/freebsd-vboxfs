@@ -234,6 +234,7 @@ void	vboxvfs_node_setinfo(struct vboxvfs_node *np,
 	    const SHFLFSOBJINFO *info);
 int	vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force);
 void	vboxvfs_node_invalattr(struct vboxvfs_node *np);
+void	vboxvfs_node_setsize(struct vnode *vp, uint64_t nsize);
 int	vboxvfs_node_opendir(struct vboxvfs_node *np, SHFLHANDLE *handlep);
 int	vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
 	    SHFLHANDLE *handlep);

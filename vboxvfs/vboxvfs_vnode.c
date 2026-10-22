@@ -28,6 +28,7 @@ static vop_access_t	vboxvfs_access;
 static vop_cachedlookup_t vboxvfs_cachedlookup;
 static vop_close_t	vboxvfs_close;
 static vop_create_t	vboxvfs_create;
+static vop_delayed_setsize_t vboxvfs_delayed_setsize;
 static vop_getattr_t	vboxvfs_getattr;
 static vop_inactive_t	vboxvfs_inactive;
 static vop_lookup_t	vboxvfs_lookup;
@@ -51,6 +52,7 @@ struct vop_vector vboxvfs_vnodeops = {
 	.vop_cachedlookup =	vboxvfs_cachedlookup,
 	.vop_close =		vboxvfs_close,
 	.vop_create =		vboxvfs_create,
+	.vop_delayed_setsize =	vboxvfs_delayed_setsize,
 	.vop_fsync =		vboxvfs_fsync,
 	.vop_getattr =		vboxvfs_getattr,
 	.vop_inactive =		vboxvfs_inactive,
@@ -1358,5 +1360,27 @@ vboxvfs_setattr(struct vop_setattr_args *ap)
 			return (error);
 		vboxvfs_node_invalattr(np);
 	}
+	return (0);
+}
+
+/*
+ * Called by the VFS, with the vnode locked exclusively, when a size change
+ * noticed under a shared lock was postponed (see vboxvfs_node_setsize()).
+ */
+static int
+vboxvfs_delayed_setsize(struct vop_delayed_setsize_args *ap)
+{
+	struct vboxvfs_node *np;
+	struct vnode *vp;
+	uint64_t size;
+
+	vp = ap->a_vp;
+	np = VTOVBOXVFS(vp);
+	if (np == NULL)
+		return (0);
+	VBOXVFS_NODE_LOCK(np);
+	size = np->vn_size;
+	VBOXVFS_NODE_UNLOCK(np);
+	vnode_pager_setsize(vp, size);
 	return (0);
 }
