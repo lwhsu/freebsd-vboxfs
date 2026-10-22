@@ -35,7 +35,7 @@ vboxvfs_vnode_cmp(struct vnode *vp, void *arg)
 	np = VTOVBOXVFS(vp);
 	ca = arg;
 	if (np->vn_parent != ca->parent || np->vn_namelen != ca->namelen ||
-	    bcmp(np->vn_name, ca->name, ca->namelen) != 0)
+	    memcmp(np->vn_name, ca->name, ca->namelen) != 0)
 		return (1);
 	return (0);
 }
@@ -444,6 +444,9 @@ vboxvfs_node_get(struct vboxvfs_mount *vmp, struct vnode *dvp,
 			return (0);
 		if (vboxvfs_mode2type(info->Attr.fMode) == (*vpp)->v_type) {
 			vboxvfs_node_setinfo(np, info);
+			VBOXVFS_NODE_LOCK(np);
+			np->vn_flags &= ~VBOXVFS_NODE_STALE;
+			VBOXVFS_NODE_UNLOCK(np);
 			return (0);
 		}
 		/*
@@ -544,4 +547,171 @@ vboxvfs_node_ref(struct vboxvfs_node *dnp, const char *name, u_int namelen,
 	ca.namelen = namelen;
 	vfs_hash_ref(dnp->vn_vmp->vm_mp, vboxvfs_node_hash(dnp, name, namelen),
 	    curthread, vpp, vboxvfs_vnode_cmp, &ca);
+}
+
+/*
+ * Make sure the node has a host handle with at least the given access
+ * (a combination of SHFL_CF_ACCESS_* bits).  Directories are opened as
+ * such.  The handle stays with the node until it goes inactive.
+ */
+int
+vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
+    SHFLHANDLE *handlep)
+{
+	struct vboxvfs_mount *vmp;
+	struct vnode *vp;
+	SHFLCREATEPARMS parms;
+	SHFLHANDLE old;
+	char *path;
+	size_t pathlen;
+	uint32_t cflags;
+	int error;
+
+	vp = VBOXVFSTOV(np);
+	vmp = np->vn_vmp;
+
+	VBOXVFS_NODE_LOCK(np);
+	if (np->vn_handle != SHFL_HANDLE_NIL &&
+	    (np->vn_haccess & access) == access) {
+		*handlep = np->vn_handle;
+		VBOXVFS_NODE_UNLOCK(np);
+		return (0);
+	}
+	/* Keep what the existing handle has; the new one supersedes it. */
+	access |= np->vn_haccess;
+	VBOXVFS_NODE_UNLOCK(np);
+
+	if (access & SHFL_CF_ACCESS_WRITE)
+		access |= SHFL_CF_ACCESS_READ;
+	cflags = SHFL_CF_ACT_OPEN_IF_EXISTS | SHFL_CF_ACT_FAIL_IF_NEW |
+	    SHFL_CF_ACCESS_DENYNONE | access;
+	if (vp->v_type == VDIR)
+		cflags |= SHFL_CF_DIRECTORY;
+
+	error = vboxvfs_node_path(np, &path, &pathlen);
+	if (error != 0)
+		return (error);
+	error = vboxvfs_host_create(vmp, path, pathlen, cflags, 0, &parms);
+	vboxvfs_node_freepath(path);
+	if (error != 0)
+		return (error);
+	if (parms.Handle == SHFL_HANDLE_NIL) {
+		switch (parms.Result) {
+		case SHFL_FILE_NOT_FOUND:
+		case SHFL_PATH_NOT_FOUND:
+			VBOXVFS_NODE_LOCK(np);
+			np->vn_flags |= VBOXVFS_NODE_STALE;
+			VBOXVFS_NODE_UNLOCK(np);
+			return (ENOENT);
+		default:
+			return (EIO);
+		}
+	}
+	vboxvfs_node_setinfo(np, &parms.Info);
+
+	VBOXVFS_NODE_LOCK(np);
+	if (np->vn_handle != SHFL_HANDLE_NIL &&
+	    (np->vn_haccess & access) == access) {
+		/* Somebody else opened a sufficient handle meanwhile. */
+		old = parms.Handle;
+		*handlep = np->vn_handle;
+	} else {
+		old = np->vn_handle;
+		np->vn_handle = parms.Handle;
+		np->vn_haccess = access;
+		*handlep = parms.Handle;
+	}
+	VBOXVFS_NODE_UNLOCK(np);
+	if (old != SHFL_HANDLE_NIL)
+		(void)vboxvfs_host_close(vmp, old);
+	return (0);
+}
+
+/*
+ * The object behind the node is gone (unlinked, or replaced by a rename):
+ * make sure no lookup finds the node again and that it is recycled once
+ * the last user is done with it.
+ */
+void
+vboxvfs_node_remove(struct vboxvfs_node *np)
+{
+	struct vnode *vp;
+
+	vp = VBOXVFSTOV(np);
+	VBOXVFS_NODE_LOCK(np);
+	np->vn_flags |= VBOXVFS_NODE_STALE;
+	if ((np->vn_flags & VBOXVFS_NODE_UNHASHED) == 0) {
+		np->vn_flags |= VBOXVFS_NODE_UNHASHED;
+		VBOXVFS_NODE_UNLOCK(np);
+		vfs_hash_remove(vp);
+	} else
+		VBOXVFS_NODE_UNLOCK(np);
+	cache_purge(vp);
+}
+
+/*
+ * Rename bookkeeping: move the node under a new parent and name and
+ * rehash it.  Called after the host accepted the rename; the caller holds
+ * the target directory's vnode lock.
+ */
+void
+vboxvfs_node_rename(struct vboxvfs_node *np, struct vnode *tdvp,
+    const char *name, u_int namelen)
+{
+	struct vboxvfs_node *tdnp, *oldparent;
+	struct vnode *oldparentvp;
+	char *newname;
+	bool oldref;
+
+	tdnp = VTOVBOXVFS(tdvp);
+	newname = malloc(namelen + 1, M_VBOXVFS, M_WAITOK);
+	bcopy(name, newname, namelen);
+	newname[namelen] = '\0';
+
+	sx_xlock(&vboxvfs_rename_lock);
+	oldparent = np->vn_parent;
+	oldref = (np->vn_flags & VBOXVFS_NODE_REFPARENT) != 0;
+	free(np->vn_name, M_VBOXVFS);
+	np->vn_name = newname;
+	np->vn_namelen = namelen;
+	np->vn_parent = tdnp;
+	VBOXVFS_NODE_LOCK(np);
+	np->vn_flags &= ~VBOXVFS_NODE_REFPARENT;
+	if ((tdnp->vn_flags & VBOXVFS_NODE_ROOT) == 0) {
+		vref(tdvp);
+		np->vn_flags |= VBOXVFS_NODE_REFPARENT;
+	}
+	VBOXVFS_NODE_UNLOCK(np);
+	if ((np->vn_flags & VBOXVFS_NODE_UNHASHED) == 0)
+		vfs_hash_rehash(VBOXVFSTOV(np),
+		    vboxvfs_node_hash(tdnp, name, namelen));
+	sx_xunlock(&vboxvfs_rename_lock);
+
+	oldparentvp = VBOXVFSTOV(oldparent);
+	if (oldref)
+		vrele(oldparentvp);
+}
+
+/*
+ * Is "np" the same as, or a descendant of, "ancestor"?  Used to refuse
+ * renaming a directory into its own subtree.
+ */
+bool
+vboxvfs_node_isunder(struct vboxvfs_node *np, struct vboxvfs_node *ancestor)
+{
+	struct vboxvfs_node *p;
+	bool found;
+
+	found = false;
+	sx_slock(&vboxvfs_rename_lock);
+	for (p = np;; p = p->vn_parent) {
+		if (p == ancestor) {
+			found = true;
+			break;
+		}
+		if (p->vn_flags & VBOXVFS_NODE_ROOT)
+			break;
+	}
+	sx_sunlock(&vboxvfs_rename_lock);
+	return (found);
 }

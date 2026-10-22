@@ -20,18 +20,30 @@
 #include <sys/sx.h>
 #include <sys/unistd.h>
 
+#include <vm/vm.h>
+#include <vm/vm_object.h>
+#include <vm/vnode_pager.h>
+
 static vop_access_t	vboxvfs_access;
 static vop_cachedlookup_t vboxvfs_cachedlookup;
 static vop_close_t	vboxvfs_close;
+static vop_create_t	vboxvfs_create;
 static vop_getattr_t	vboxvfs_getattr;
 static vop_inactive_t	vboxvfs_inactive;
 static vop_lookup_t	vboxvfs_lookup;
+static vop_mkdir_t	vboxvfs_mkdir;
 static vop_open_t	vboxvfs_open;
 static vop_pathconf_t	vboxvfs_pathconf;
 static vop_print_t	vboxvfs_print;
 static vop_readdir_t	vboxvfs_readdir;
+static vop_readlink_t	vboxvfs_readlink;
 static vop_reclaim_t	vboxvfs_reclaim;
+static vop_remove_t	vboxvfs_remove;
+static vop_rename_t	vboxvfs_rename;
+static vop_rmdir_t	vboxvfs_rmdir;
+static vop_setattr_t	vboxvfs_setattr;
 static vop_strategy_t	vboxvfs_strategy;
+static vop_symlink_t	vboxvfs_symlink;
 
 struct vop_vector vboxvfs_vnodeops = {
 	.vop_default =		&default_vnodeops,
@@ -39,15 +51,23 @@ struct vop_vector vboxvfs_vnodeops = {
 	.vop_access =		vboxvfs_access,
 	.vop_cachedlookup =	vboxvfs_cachedlookup,
 	.vop_close =		vboxvfs_close,
+	.vop_create =		vboxvfs_create,
 	.vop_getattr =		vboxvfs_getattr,
 	.vop_inactive =		vboxvfs_inactive,
 	.vop_lookup =		vboxvfs_lookup,
+	.vop_mkdir =		vboxvfs_mkdir,
 	.vop_open =		vboxvfs_open,
 	.vop_pathconf =		vboxvfs_pathconf,
 	.vop_print =		vboxvfs_print,
 	.vop_readdir =		vboxvfs_readdir,
+	.vop_readlink =		vboxvfs_readlink,
 	.vop_reclaim =		vboxvfs_reclaim,
+	.vop_remove =		vboxvfs_remove,
+	.vop_rename =		vboxvfs_rename,
+	.vop_rmdir =		vboxvfs_rmdir,
+	.vop_setattr =		vboxvfs_setattr,
 	.vop_strategy =		vboxvfs_strategy,
+	.vop_symlink =		vboxvfs_symlink,
 };
 VFS_VOP_VECTOR_REGISTER(vboxvfs_vnodeops);
 
@@ -608,7 +628,8 @@ vboxvfs_reclaim(struct vop_reclaim_args *ap)
 	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "reclaim ino %ju\n",
 	    (uintmax_t)np->vn_ino);
 
-	vfs_hash_remove(vp);
+	if ((np->vn_flags & VBOXVFS_NODE_UNHASHED) == 0)
+		vfs_hash_remove(vp);
 	vboxvfs_node_closehandle(np);
 	if (np->vn_flags & VBOXVFS_NODE_ROOT)
 		vmp->vm_rootnode = NULL;
@@ -673,5 +694,564 @@ vboxvfs_strategy(struct vop_strategy_args *ap)
 	bp->b_ioflags |= BIO_ERROR;
 	bp->b_error = EOPNOTSUPP;
 	bufdone(bp);
+	return (0);
+}
+
+/*
+ * Modifying operations.
+ */
+
+static int
+vboxvfs_create_result(SHFLCREATERESULT result)
+{
+
+	switch (result) {
+	case SHFL_FILE_EXISTS:
+		return (EEXIST);
+	case SHFL_FILE_NOT_FOUND:
+	case SHFL_PATH_NOT_FOUND:
+		return (ENOENT);
+	default:
+		return (EIO);
+	}
+}
+
+static RTFMODE
+vboxvfs_type2rtfs(__enum_uint8(vtype) type)
+{
+
+	switch (type) {
+	case VDIR:
+		return (RTFS_TYPE_DIRECTORY);
+	case VLNK:
+		return (RTFS_TYPE_SYMLINK);
+	default:
+		return (RTFS_TYPE_FILE);
+	}
+}
+
+/*
+ * The host creates objects with its own umask and, for directories, a
+ * hardcoded 0777; set the mode we were asked for.  Best effort: the host
+ * forces u+r (u+rx for directories) and clears suid/sgid/sticky anyway.
+ */
+static void
+vboxvfs_fixmode(struct vboxvfs_mount *vmp, SHFLHANDLE handle, RTFMODE type,
+    mode_t mode, SHFLFSOBJINFO *info)
+{
+	SHFLFSOBJINFO si;
+
+	RT_ZERO(si);
+	si.Attr.fMode = type | (mode & ALLPERMS);
+	si.Attr.enmAdditional = SHFLFSOBJATTRADD_NOTHING;
+	if (vboxvfs_host_setinfo(vmp, handle, &si) == 0)
+		info->Attr.fMode = si.Attr.fMode;
+}
+
+static int
+vboxvfs_create(struct vop_create_args *ap)
+{
+	struct componentname *cnp;
+	struct vboxvfs_mount *vmp;
+	struct vboxvfs_node *dnp, *np;
+	struct vnode *dvp, *vp;
+	SHFLCREATEPARMS parms;
+	char *path;
+	size_t pathlen;
+	mode_t mode;
+	int error;
+
+	dvp = ap->a_dvp;
+	cnp = ap->a_cnp;
+	dnp = VTOVBOXVFS(dvp);
+	vmp = dnp->vn_vmp;
+	if (ap->a_vap->va_type != VREG)
+		return (EOPNOTSUPP);
+	mode = ap->a_vap->va_mode & ALLPERMS;
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "create \"%.*s\" mode %#o in %ju\n",
+	    (int)cnp->cn_namelen, cnp->cn_nameptr, mode, (uintmax_t)dnp->vn_ino);
+
+	error = vboxvfs_node_childpath(dnp, cnp->cn_nameptr, cnp->cn_namelen,
+	    &path, &pathlen);
+	if (error != 0)
+		return (error);
+	error = vboxvfs_host_create(vmp, path, pathlen,
+	    SHFL_CF_ACT_CREATE_IF_NEW | SHFL_CF_ACT_FAIL_IF_EXISTS |
+	    SHFL_CF_ACCESS_READWRITE | SHFL_CF_ACCESS_DENYNONE, mode, &parms);
+	vboxvfs_node_freepath(path);
+	if (error != 0)
+		return (error);
+	if (parms.Handle == SHFL_HANDLE_NIL)
+		return (vboxvfs_create_result(parms.Result));
+	vboxvfs_node_invalattr(dnp);
+	if ((parms.Info.Attr.fMode & ALLPERMS) != mode)
+		vboxvfs_fixmode(vmp, parms.Handle, RTFS_TYPE_FILE, mode,
+		    &parms.Info);
+
+	error = vboxvfs_node_get(vmp, dvp, cnp->cn_nameptr, cnp->cn_namelen,
+	    &parms.Info, &vp);
+	if (error != 0) {
+		(void)vboxvfs_host_close(vmp, parms.Handle);
+		return (error);
+	}
+	/* Keep the handle; the open that follows wants to write. */
+	np = VTOVBOXVFS(vp);
+	VBOXVFS_NODE_LOCK(np);
+	if (np->vn_handle == SHFL_HANDLE_NIL) {
+		np->vn_handle = parms.Handle;
+		np->vn_haccess = SHFL_CF_ACCESS_READWRITE;
+		parms.Handle = SHFL_HANDLE_NIL;
+	}
+	VBOXVFS_NODE_UNLOCK(np);
+	if (parms.Handle != SHFL_HANDLE_NIL)
+		(void)vboxvfs_host_close(vmp, parms.Handle);
+	if (cnp->cn_flags & MAKEENTRY)
+		cache_enter(dvp, vp, cnp);
+	*ap->a_vpp = vp;
+	return (0);
+}
+
+static int
+vboxvfs_mkdir(struct vop_mkdir_args *ap)
+{
+	struct componentname *cnp;
+	struct vboxvfs_mount *vmp;
+	struct vboxvfs_node *dnp;
+	struct vnode *dvp, *vp;
+	SHFLCREATEPARMS parms;
+	char *path;
+	size_t pathlen;
+	mode_t mode;
+	int error;
+
+	dvp = ap->a_dvp;
+	cnp = ap->a_cnp;
+	dnp = VTOVBOXVFS(dvp);
+	vmp = dnp->vn_vmp;
+	mode = ap->a_vap->va_mode & ALLPERMS;
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "mkdir \"%.*s\" mode %#o in %ju\n",
+	    (int)cnp->cn_namelen, cnp->cn_nameptr, mode, (uintmax_t)dnp->vn_ino);
+
+	error = vboxvfs_node_childpath(dnp, cnp->cn_nameptr, cnp->cn_namelen,
+	    &path, &pathlen);
+	if (error != 0)
+		return (error);
+	error = vboxvfs_host_create(vmp, path, pathlen,
+	    SHFL_CF_DIRECTORY | SHFL_CF_ACT_CREATE_IF_NEW |
+	    SHFL_CF_ACT_FAIL_IF_EXISTS | SHFL_CF_ACCESS_READ |
+	    SHFL_CF_ACCESS_ATTR_WRITE | SHFL_CF_ACCESS_DENYNONE, mode, &parms);
+	vboxvfs_node_freepath(path);
+	if (error != 0)
+		return (error);
+	if (parms.Handle == SHFL_HANDLE_NIL)
+		return (vboxvfs_create_result(parms.Result));
+	vboxvfs_node_invalattr(dnp);
+	/* The host ignores the mode of new directories (0777 & umask). */
+	if ((parms.Info.Attr.fMode & ALLPERMS) != mode)
+		vboxvfs_fixmode(vmp, parms.Handle, RTFS_TYPE_DIRECTORY, mode,
+		    &parms.Info);
+	(void)vboxvfs_host_close(vmp, parms.Handle);
+
+	error = vboxvfs_node_get(vmp, dvp, cnp->cn_nameptr, cnp->cn_namelen,
+	    &parms.Info, &vp);
+	if (error != 0)
+		return (error);
+	if (cnp->cn_flags & MAKEENTRY)
+		cache_enter(dvp, vp, cnp);
+	*ap->a_vpp = vp;
+	return (0);
+}
+
+static int
+vboxvfs_remove(struct vop_remove_args *ap)
+{
+	struct vboxvfs_node *dnp, *np;
+	struct vnode *dvp, *vp;
+	char *path;
+	size_t pathlen;
+	int error;
+
+	dvp = ap->a_dvp;
+	vp = ap->a_vp;
+	dnp = VTOVBOXVFS(dvp);
+	np = VTOVBOXVFS(vp);
+	if (vp->v_type == VDIR)
+		return (EPERM);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "remove ino %ju from %ju\n",
+	    (uintmax_t)np->vn_ino, (uintmax_t)dnp->vn_ino);
+
+	error = vboxvfs_node_path(np, &path, &pathlen);
+	if (error != 0)
+		return (error);
+	error = vboxvfs_host_remove(np->vn_vmp, path, pathlen,
+	    vp->v_type == VLNK ? SHFL_REMOVE_SYMLINK : SHFL_REMOVE_FILE);
+	vboxvfs_node_freepath(path);
+	if (error != 0)
+		return (error);
+	/*
+	 * XXX A Windows host refuses to remove an open file (sharing
+	 * violation, EBUSY); SHFL_FN_CLOSE_AND_REMOVE is the way out there.
+	 */
+	vboxvfs_node_remove(np);
+	vboxvfs_node_invalattr(dnp);
+	return (0);
+}
+
+static int
+vboxvfs_rmdir(struct vop_rmdir_args *ap)
+{
+	struct vboxvfs_node *dnp, *np;
+	struct vnode *dvp, *vp;
+	char *path;
+	size_t pathlen;
+	int error;
+
+	dvp = ap->a_dvp;
+	vp = ap->a_vp;
+	dnp = VTOVBOXVFS(dvp);
+	np = VTOVBOXVFS(vp);
+	if (dvp == vp)
+		return (EINVAL);
+	if (vp->v_vflag & VV_ROOT)
+		return (EBUSY);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "rmdir ino %ju from %ju\n",
+	    (uintmax_t)np->vn_ino, (uintmax_t)dnp->vn_ino);
+
+	error = vboxvfs_node_path(np, &path, &pathlen);
+	if (error != 0)
+		return (error);
+	error = vboxvfs_host_remove(np->vn_vmp, path, pathlen, SHFL_REMOVE_DIR);
+	vboxvfs_node_freepath(path);
+	if (error != 0)
+		return (error);
+	sx_xlock(&np->vn_dirsx);
+	vboxvfs_node_freedir(np);
+	sx_xunlock(&np->vn_dirsx);
+	vboxvfs_node_remove(np);
+	vboxvfs_node_invalattr(dnp);
+	return (0);
+}
+
+/*
+ * Rename.  Per the VOP_RENAME protocol tdvp and tvp come in locked, fdvp
+ * and fvp only referenced, and all four must be released here.  The host
+ * does the work by path; afterwards the node of fvp is moved under its
+ * new parent and name, which keeps the paths of everything below it
+ * right without touching those nodes.
+ */
+static int
+vboxvfs_rename(struct vop_rename_args *ap)
+{
+	struct componentname *fcnp, *tcnp;
+	struct vboxvfs_mount *vmp;
+	struct vboxvfs_node *fdnp, *fnp, *tdnp, *tnp;
+	struct vnode *fdvp, *fvp, *tdvp, *tvp;
+	char *src, *dst;
+	size_t srclen, dstlen;
+	uint32_t rflags;
+	int error;
+
+	fdvp = ap->a_fdvp;
+	fvp = ap->a_fvp;
+	fcnp = ap->a_fcnp;
+	tdvp = ap->a_tdvp;
+	tvp = ap->a_tvp;
+	tcnp = ap->a_tcnp;
+	src = dst = NULL;
+
+	if (fvp->v_mount != tdvp->v_mount ||
+	    (tvp != NULL && fvp->v_mount != tvp->v_mount)) {
+		error = EXDEV;
+		goto out;
+	}
+	if (fvp == tvp) {
+		error = 0;
+		goto out;
+	}
+	fdnp = VTOVBOXVFS(fdvp);
+	fnp = VTOVBOXVFS(fvp);
+	tdnp = VTOVBOXVFS(tdvp);
+	tnp = tvp != NULL ? VTOVBOXVFS(tvp) : NULL;
+	vmp = fnp->vn_vmp;
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP,
+	    "rename \"%.*s\" (ino %ju) in %ju -> \"%.*s\" in %ju%s\n",
+	    (int)fcnp->cn_namelen, fcnp->cn_nameptr, (uintmax_t)fnp->vn_ino,
+	    (uintmax_t)fdnp->vn_ino, (int)tcnp->cn_namelen, tcnp->cn_nameptr,
+	    (uintmax_t)tdnp->vn_ino, tvp != NULL ? " (replacing)" : "");
+
+	if ((fvp->v_vflag & VV_ROOT) != 0 ||
+	    (tvp != NULL && (tvp->v_vflag & VV_ROOT) != 0)) {
+		error = EINVAL;
+		goto out;
+	}
+	if (tvp != NULL) {
+		if (fvp->v_type == VDIR && tvp->v_type != VDIR) {
+			error = ENOTDIR;
+			goto out;
+		}
+		if (fvp->v_type != VDIR && tvp->v_type == VDIR) {
+			error = EISDIR;
+			goto out;
+		}
+	}
+	/* A directory cannot be moved into its own subtree. */
+	if (fvp->v_type == VDIR && vboxvfs_node_isunder(tdnp, fnp)) {
+		error = EINVAL;
+		goto out;
+	}
+
+	error = vboxvfs_node_childpath(fdnp, fcnp->cn_nameptr, fcnp->cn_namelen,
+	    &src, &srclen);
+	if (error != 0)
+		goto out;
+	error = vboxvfs_node_childpath(tdnp, tcnp->cn_nameptr, tcnp->cn_namelen,
+	    &dst, &dstlen);
+	if (error != 0)
+		goto out;
+	rflags = fvp->v_type == VDIR ? SHFL_RENAME_DIR : SHFL_RENAME_FILE;
+	if (tvp != NULL)
+		rflags |= SHFL_RENAME_REPLACE_IF_EXISTS;
+	error = vboxvfs_host_rename(vmp, src, srclen, dst, dstlen, rflags);
+	if (error != 0)
+		goto out;
+
+	if (tvp != NULL) {
+		if (tvp->v_type == VDIR) {
+			sx_xlock(&tnp->vn_dirsx);
+			vboxvfs_node_freedir(tnp);
+			sx_xunlock(&tnp->vn_dirsx);
+		}
+		vboxvfs_node_remove(tnp);
+	}
+	vboxvfs_node_rename(fnp, tdvp, tcnp->cn_nameptr, tcnp->cn_namelen);
+	cache_vop_rename(fdvp, fvp, tdvp, tvp, fcnp, tcnp);
+	vboxvfs_node_invalattr(fdnp);
+	vboxvfs_node_invalattr(tdnp);
+	vboxvfs_node_invalattr(fnp);
+out:
+	if (src != NULL)
+		vboxvfs_node_freepath(src);
+	if (dst != NULL)
+		vboxvfs_node_freepath(dst);
+	if (tdvp == tvp)
+		vrele(tdvp);
+	else
+		vput(tdvp);
+	if (tvp != NULL)
+		vput(tvp);
+	vrele(fdvp);
+	vrele(fvp);
+	return (error);
+}
+
+static int
+vboxvfs_symlink(struct vop_symlink_args *ap)
+{
+	struct componentname *cnp;
+	struct vboxvfs_mount *vmp;
+	struct vboxvfs_node *dnp;
+	struct vnode *dvp, *vp;
+	SHFLFSOBJINFO info;
+	char *path;
+	size_t pathlen;
+	int error;
+
+	dvp = ap->a_dvp;
+	cnp = ap->a_cnp;
+	dnp = VTOVBOXVFS(dvp);
+	vmp = dnp->vn_vmp;
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "symlink \"%.*s\" -> \"%s\" in %ju\n",
+	    (int)cnp->cn_namelen, cnp->cn_nameptr, ap->a_target,
+	    (uintmax_t)dnp->vn_ino);
+
+	error = vboxvfs_node_childpath(dnp, cnp->cn_nameptr, cnp->cn_namelen,
+	    &path, &pathlen);
+	if (error != 0)
+		return (error);
+	error = vboxvfs_host_symlink(vmp, path, pathlen, ap->a_target,
+	    strlen(ap->a_target), &info);
+	vboxvfs_node_freepath(path);
+	if (error != 0) {
+		/*
+		 * Symbolic link creation is disabled per share by default
+		 * (VBoxInternal2/SharedFoldersEnableSymlinksCreate/<share>).
+		 */
+		if (error == EOPNOTSUPP ||
+		    (error == EROFS && (dvp->v_mount->mnt_flag & MNT_RDONLY) == 0)) {
+			VBOXVFS_DPRINTF(VBOXVFS_DEBUG_ERR, "symlink creation "
+			    "refused by the host; is SharedFoldersEnableSymlinksCreate "
+			    "set for share \"%s\"?\n", vmp->vm_share);
+			error = EPERM;
+		}
+		return (error);
+	}
+	vboxvfs_node_invalattr(dnp);
+	error = vboxvfs_node_get(vmp, dvp, cnp->cn_nameptr, cnp->cn_namelen,
+	    &info, &vp);
+	if (error != 0)
+		return (error);
+	*ap->a_vpp = vp;
+	return (0);
+}
+
+static int
+vboxvfs_readlink(struct vop_readlink_args *ap)
+{
+	struct vboxvfs_node *np;
+	struct vnode *vp;
+	char *path, *buf;
+	size_t pathlen, len;
+	int error;
+
+	vp = ap->a_vp;
+	np = VTOVBOXVFS(vp);
+	if (vp->v_type != VLNK)
+		return (EINVAL);
+	error = vboxvfs_node_path(np, &path, &pathlen);
+	if (error != 0)
+		return (error);
+	buf = malloc(MAXPATHLEN, M_VBOXVFS, M_WAITOK);
+	error = vboxvfs_host_readlink(np->vn_vmp, path, pathlen, buf, MAXPATHLEN,
+	    &len);
+	vboxvfs_node_freepath(path);
+	if (error == 0)
+		error = uiomove(buf, len, ap->a_uio);
+	free(buf, M_VBOXVFS);
+	return (error);
+}
+
+static int
+vboxvfs_setattr(struct vop_setattr_args *ap)
+{
+	struct vboxvfs_mount *vmp;
+	struct vboxvfs_node *np;
+	struct vnode *vp;
+	struct vattr *vap;
+	struct ucred *cred;
+	SHFLFSOBJINFO info;
+	SHFLHANDLE handle;
+	int error;
+	bool rdonly;
+
+	vp = ap->a_vp;
+	vap = ap->a_vap;
+	cred = ap->a_cred;
+	np = VTOVBOXVFS(vp);
+	vmp = np->vn_vmp;
+	rdonly = (vp->v_mount->mnt_flag & MNT_RDONLY) != 0;
+
+	if (vap->va_flags != VNOVAL)
+		return (EOPNOTSUPP);
+	if (vap->va_type != VNON || vap->va_nlink != VNOVAL ||
+	    vap->va_fsid != VNOVAL || vap->va_fileid != VNOVAL ||
+	    vap->va_blocksize != VNOVAL || vap->va_gen != VNOVAL ||
+	    vap->va_rdev != VNOVAL || vap->va_bytes != VNOVAL)
+		return (EINVAL);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "setattr ino %ju mode %#o size %jd "
+	    "uid %d gid %d\n", (uintmax_t)np->vn_ino, vap->va_mode,
+	    (intmax_t)vap->va_size, (int)vap->va_uid, (int)vap->va_gid);
+
+	if (vap->va_uid != (uid_t)VNOVAL || vap->va_gid != (gid_t)VNOVAL) {
+		if (rdonly)
+			return (EROFS);
+		/* The host has no owners; only the mount's identity exists. */
+		if ((vap->va_uid != (uid_t)VNOVAL && vap->va_uid != vmp->vm_uid) ||
+		    (vap->va_gid != (gid_t)VNOVAL && vap->va_gid != vmp->vm_gid))
+			return (EPERM);
+		error = VOP_ACCESS(vp, VADMIN, cred, curthread);
+		if (error != 0)
+			return (error);
+	}
+
+	if (vap->va_size != (u_quad_t)VNOVAL) {
+		switch (vp->v_type) {
+		case VDIR:
+			return (EISDIR);
+		case VREG:
+			break;
+		case VLNK:
+		default:
+			return (EINVAL);
+		}
+		if (rdonly)
+			return (EROFS);
+		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_WRITE, &handle);
+		if (error != 0)
+			return (error);
+		error = vboxvfs_host_setsize(vmp, handle, vap->va_size);
+		if (error != 0)
+			return (error);
+		VBOXVFS_NODE_LOCK(np);
+		np->vn_size = vap->va_size;
+		VBOXVFS_NODE_UNLOCK(np);
+		vnode_pager_setsize(vp, vap->va_size);
+		vboxvfs_node_invalattr(np);
+	}
+
+	if (vap->va_mode != (mode_t)VNOVAL) {
+		if (rdonly)
+			return (EROFS);
+		error = VOP_ACCESS(vp, VADMIN, cred, curthread);
+		if (error != 0)
+			return (error);
+		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_ATTR_WRITE,
+		    &handle);
+		if (error != 0)
+			return (error);
+		RT_ZERO(info);
+		info.Attr.fMode = vboxvfs_type2rtfs(vp->v_type) |
+		    (vap->va_mode & ALLPERMS);
+		info.Attr.enmAdditional = SHFLFSOBJATTRADD_NOTHING;
+		error = vboxvfs_host_setinfo(vmp, handle, &info);
+		if (error != 0)
+			return (error);
+		vboxvfs_node_invalattr(np);
+	}
+
+	if (vap->va_atime.tv_sec != VNOVAL || vap->va_mtime.tv_sec != VNOVAL ||
+	    vap->va_birthtime.tv_sec != VNOVAL) {
+		if (rdonly)
+			return (EROFS);
+		error = VOP_ACCESS(vp, VADMIN, cred, curthread);
+		if (error != 0) {
+			if ((vap->va_vaflags & VA_UTIMES_NULL) == 0)
+				return (error);
+			error = VOP_ACCESS(vp, VWRITE, cred, curthread);
+			if (error != 0)
+				return (error);
+		}
+		error = vboxvfs_node_handle(np, SHFL_CF_ACCESS_ATTR_WRITE,
+		    &handle);
+		if (error != 0)
+			return (error);
+		/*
+		 * Zero means "leave alone" to the host, so the epoch itself
+		 * cannot be set; use the next nanosecond instead.
+		 */
+		RT_ZERO(info);
+		info.Attr.enmAdditional = SHFLFSOBJATTRADD_NOTHING;
+		if (vap->va_atime.tv_sec != VNOVAL) {
+			info.AccessTime.i64NanosecondsRelativeToUnixEpoch =
+			    vboxvfs_ts2ns(&vap->va_atime);
+			if (info.AccessTime.i64NanosecondsRelativeToUnixEpoch == 0)
+				info.AccessTime.i64NanosecondsRelativeToUnixEpoch = 1;
+		}
+		if (vap->va_mtime.tv_sec != VNOVAL) {
+			info.ModificationTime.i64NanosecondsRelativeToUnixEpoch =
+			    vboxvfs_ts2ns(&vap->va_mtime);
+			if (info.ModificationTime.i64NanosecondsRelativeToUnixEpoch == 0)
+				info.ModificationTime.i64NanosecondsRelativeToUnixEpoch = 1;
+		}
+		if (vap->va_birthtime.tv_sec != VNOVAL) {
+			info.BirthTime.i64NanosecondsRelativeToUnixEpoch =
+			    vboxvfs_ts2ns(&vap->va_birthtime);
+			if (info.BirthTime.i64NanosecondsRelativeToUnixEpoch == 0)
+				info.BirthTime.i64NanosecondsRelativeToUnixEpoch = 1;
+		}
+		error = vboxvfs_host_setinfo(vmp, handle, &info);
+		if (error != 0)
+			return (error);
+		vboxvfs_node_invalattr(np);
+	}
 	return (0);
 }

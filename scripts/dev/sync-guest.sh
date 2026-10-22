@@ -16,4 +16,5 @@ TOP=$(cd "$(dirname "$0")/../.." && pwd)
 exec rsync -a --delete --exclude .git --exclude '*.o' --exclude '*.ko' \
     --exclude '*.ko.debug' --exclude '*.ko.full' --exclude '.depend*' \
     --exclude machine --exclude x86 --exclude i386 \
+    --exclude mount_vboxvfs/mount_vboxvfs --exclude '*.full' --exclude '*.8.gz' \
     "$TOP/" "$GUEST:freebsd-vboxfs/"

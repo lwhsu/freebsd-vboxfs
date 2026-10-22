@@ -427,3 +427,140 @@ vboxvfs_host_list(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
 	VbglR0PhysHeapFree(req);
 	return (vboxvfs_vrc2errno(vrc));
 }
+
+int
+vboxvfs_host_remove(struct vboxvfs_mount *vmp, const char *path,
+    size_t pathlen, uint32_t rflags)
+{
+	VBOXSFREMOVEREQ *req;
+	int vrc;
+
+	if (pathlen >= UINT16_MAX)
+		return (ENAMETOOLONG);
+	req = VbglR0PhysHeapAlloc(RT_UOFFSETOF(VBOXSFREMOVEREQ,
+	    StrPath.String) + pathlen + 1);
+	if (req == NULL)
+		return (ENOMEM);
+	vboxvfs_host_setstring(&req->StrPath, path, pathlen);
+	vrc = VbglR0SfHostReqRemove(vmp->vm_root, req, rflags);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "REMOVE \"%.*s\" flags %#x: %d\n",
+	    (int)pathlen, path, rflags, vrc);
+	VbglR0PhysHeapFree(req);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+int
+vboxvfs_host_rename(struct vboxvfs_mount *vmp, const char *src,
+    size_t srclen, const char *dst, size_t dstlen, uint32_t rflags)
+{
+	VBOXSFRENAMEWITHSRCBUFREQ *req;
+	SHFLSTRING *srcstr;
+	int vrc;
+
+	if (srclen >= UINT16_MAX || dstlen >= UINT16_MAX)
+		return (ENAMETOOLONG);
+	req = VbglR0PhysHeapAlloc(RT_UOFFSETOF(VBOXSFRENAMEWITHSRCBUFREQ,
+	    StrDstPath.String) + dstlen + 1);
+	if (req == NULL)
+		return (ENOMEM);
+	srcstr = VbglR0PhysHeapAlloc(SHFLSTRING_HEADER_SIZE + srclen + 1);
+	if (srcstr == NULL) {
+		VbglR0PhysHeapFree(req);
+		return (ENOMEM);
+	}
+	vboxvfs_host_setstring(&req->StrDstPath, dst, dstlen);
+	vboxvfs_host_setstring(srcstr, src, srclen);
+	vrc = VbglR0SfHostReqRenameWithSrcBuf(vmp->vm_root, req, srcstr,
+	    rflags);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST,
+	    "RENAME \"%.*s\" -> \"%.*s\" flags %#x: %d\n", (int)srclen, src,
+	    (int)dstlen, dst, rflags, vrc);
+	VbglR0PhysHeapFree(srcstr);
+	VbglR0PhysHeapFree(req);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+/*
+ * Read the target of a symbolic link into buf (kernel memory, bufsize
+ * bytes); *lenp is the length without the terminating NUL.
+ */
+int
+vboxvfs_host_readlink(struct vboxvfs_mount *vmp, const char *path,
+    size_t pathlen, char *buf, size_t bufsize, size_t *lenp)
+{
+	char *hbuf;
+	size_t len;
+	int vrc;
+
+	if (pathlen >= UINT16_MAX)
+		return (ENAMETOOLONG);
+	hbuf = VbglR0PhysHeapAlloc(bufsize);
+	if (hbuf == NULL)
+		return (ENOMEM);
+	vrc = VbglR0SfHostReqReadLinkContigSimple(vmp->vm_root, path, pathlen,
+	    hbuf, VbglR0PhysHeapGetPhysAddr(hbuf), bufsize);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "READLINK \"%.*s\": %d\n",
+	    (int)pathlen, path, vrc);
+	if (RT_SUCCESS(vrc)) {
+		len = strnlen(hbuf, bufsize);
+		bcopy(hbuf, buf, len);
+		*lenp = len;
+	}
+	VbglR0PhysHeapFree(hbuf);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+/*
+ * Create a symbolic link; *info receives the attributes of the new link.
+ */
+int
+vboxvfs_host_symlink(struct vboxvfs_mount *vmp, const char *path,
+    size_t pathlen, const char *target, size_t targetlen,
+    SHFLFSOBJINFO *info)
+{
+	VBOXSFCREATESYMLINKREQ *req;
+	SHFLSTRING *tstr;
+	int vrc;
+
+	if (pathlen >= UINT16_MAX || targetlen >= UINT16_MAX)
+		return (ENAMETOOLONG);
+	req = VbglR0PhysHeapAlloc(RT_UOFFSETOF(VBOXSFCREATESYMLINKREQ,
+	    StrSymlinkPath.String) + pathlen + 1);
+	if (req == NULL)
+		return (ENOMEM);
+	tstr = VbglR0PhysHeapAlloc(SHFLSTRING_HEADER_SIZE + targetlen + 1);
+	if (tstr == NULL) {
+		VbglR0PhysHeapFree(req);
+		return (ENOMEM);
+	}
+	vboxvfs_host_setstring(&req->StrSymlinkPath, path, pathlen);
+	vboxvfs_host_setstring(tstr, target, targetlen);
+	RT_ZERO(req->ObjInfo);
+	vrc = VbglR0SfHostReqCreateSymlinkContig(vmp->vm_root, tstr,
+	    VbglR0PhysHeapGetPhysAddr(tstr), req);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST,
+	    "SYMLINK \"%.*s\" -> \"%.*s\": %d\n", (int)pathlen, path,
+	    (int)targetlen, target, vrc);
+	if (RT_SUCCESS(vrc))
+		*info = req->ObjInfo;
+	VbglR0PhysHeapFree(tstr);
+	VbglR0PhysHeapFree(req);
+	return (vboxvfs_vrc2errno(vrc));
+}
+
+/*
+ * Truncate or extend a file through a handle opened for writing.
+ */
+int
+vboxvfs_host_setsize(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
+    uint64_t size)
+{
+	int vrc;
+
+	if (vboxvfs_sflastfn < SHFL_FN_SET_FILE_SIZE)
+		return (EOPNOTSUPP);
+	vrc = VbglR0SfHostReqSetFileSizeSimple(vmp->vm_root, handle, size);
+	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_HOST, "SET_FILE_SIZE %#jx %ju: %d\n",
+	    (uintmax_t)handle, (uintmax_t)size, vrc);
+	return (vboxvfs_vrc2errno(vrc));
+}

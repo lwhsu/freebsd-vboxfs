@@ -16,7 +16,7 @@
 # builds the same sources through Makefile.kmk.
 
 KMOD=	vboxvfs
-SRCS=	vboxvfs_host.c vboxvfs_mount.c vboxvfs_node.c vboxvfs_vnode.c
+SRCS=	vboxvfs_compat.c vboxvfs_host.c vboxvfs_mount.c vboxvfs_node.c vboxvfs_vnode.c
 SRCS+=	vnode_if.h
 
 VBOX_SRC?=	/usr/ports/emulators/virtualbox-ose-additions-72/work/VirtualBox-7.2.20
@@ -54,3 +54,6 @@ OBJS+=	${lib}
 ${lib}: ${VBOX_LIBDIR}/${lib}
 	cp ${.ALLSRC} ${.TARGET}
 .endfor
+# kmod.mk expanded its "${FULLPROG}: ${OBJS}" dependency before the archives
+# were appended, so name them as prerequisites explicitly.
+${FULLPROG}: ${VBOX_LIBS}

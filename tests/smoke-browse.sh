@@ -42,10 +42,14 @@ uname -a
 sysctl kern.osreldate
 
 step "load modules"
-kldstat -q -m vboxguest || check kldload vboxguest
+kldstat -q -n vboxguest || check kldload vboxguest
 kldstat -q -n vboxvfs && check kldunload vboxvfs
 check kldload "$KO"
-check kldstat -q -n vboxvfs
+if ! kldstat -q -n vboxvfs; then
+	echo "    vboxvfs is not loaded; stopping here so that nmount does not"
+	echo "    auto-load another vboxvfs.ko from /boot/modules"
+	exit 1
+fi
 dmesg | tail -3
 
 step "mount"

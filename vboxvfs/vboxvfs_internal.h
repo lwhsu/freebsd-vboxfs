@@ -145,6 +145,7 @@ struct vboxvfs_node {
 #define	VBOXVFS_NODE_REFPARENT	0x0002	/* holds a reference on vn_parent */
 #define	VBOXVFS_NODE_STALE	0x0004	/* removed, or replaced by rename;
 					   recycle when inactive */
+#define	VBOXVFS_NODE_UNHASHED	0x0008	/* already taken out of vfs_hash */
 
 #define	VFSTOVBOXVFS(mp)	((struct vboxvfs_mount *)((mp)->mnt_data))
 #define	VTOVBOXVFS(vp)		((struct vboxvfs_node *)((vp)->v_data))
@@ -188,6 +189,17 @@ int	vboxvfs_host_list(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
 void	*vboxvfs_host_alloc(size_t size);
 void	vboxvfs_host_free(void *p);
 int	vboxvfs_vrc2errno(int vrc);
+int	vboxvfs_host_remove(struct vboxvfs_mount *vmp, const char *path,
+	    size_t pathlen, uint32_t rflags);
+int	vboxvfs_host_rename(struct vboxvfs_mount *vmp, const char *src,
+	    size_t srclen, const char *dst, size_t dstlen, uint32_t rflags);
+int	vboxvfs_host_readlink(struct vboxvfs_mount *vmp, const char *path,
+	    size_t pathlen, char *buf, size_t bufsize, size_t *lenp);
+int	vboxvfs_host_symlink(struct vboxvfs_mount *vmp, const char *path,
+	    size_t pathlen, const char *target, size_t targetlen,
+	    SHFLFSOBJINFO *info);
+int	vboxvfs_host_setsize(struct vboxvfs_mount *vmp, SHFLHANDLE handle,
+	    uint64_t size);
 int	vboxvfs_host_lastfn(void);
 uint32_t vboxvfs_host_features(void);
 
@@ -215,6 +227,13 @@ void	vboxvfs_node_setinfo(struct vboxvfs_node *np,
 int	vboxvfs_node_revalidate(struct vboxvfs_node *np, bool force);
 void	vboxvfs_node_invalattr(struct vboxvfs_node *np);
 int	vboxvfs_node_opendir(struct vboxvfs_node *np, SHFLHANDLE *handlep);
+int	vboxvfs_node_handle(struct vboxvfs_node *np, uint32_t access,
+	    SHFLHANDLE *handlep);
+void	vboxvfs_node_remove(struct vboxvfs_node *np);
+void	vboxvfs_node_rename(struct vboxvfs_node *np, struct vnode *tdvp,
+	    const char *name, u_int namelen);
+bool	vboxvfs_node_isunder(struct vboxvfs_node *np,
+	    struct vboxvfs_node *ancestor);
 void	vboxvfs_node_closehandle(struct vboxvfs_node *np);
 void	vboxvfs_node_freedir(struct vboxvfs_node *np);
 __enum_uint8(vtype) vboxvfs_mode2type(RTFMODE fmode);
