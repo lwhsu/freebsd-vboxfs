@@ -115,11 +115,24 @@ for t in creat mkdir rename dirrename rw mmap fts openat symlink; do
 	if kill -0 $p 2>/dev/null; then problem "stress2 $t still running 5 min after its time limit (hang?)"; procstat -kk $p >> "$LOGDIR/s2-$t.log" 2>&1; kill -9 $p 2>/dev/null; fi
 	wait $p 2>/dev/null
 	rc=$(sed -n 's/^rc=//p' "$LOGDIR/s2-$t.log" | tail -1)
-	size=$(grep -oE "$t\(size=[0-9]+" "$LOGDIR/s2-$t.log" | head -1)
-	odd=$(grep -vE "^(run time|$t\(size=|rc=)" "$LOGDIR/s2-$t.log" | grep -c .)
-	log "stress2 $t: rc=${rc:-?} ${size:-size=?} other-lines=$odd"
+	# "<name>(size=N, incarnations=M). Free(...)": size is absent for tests
+	# without a size (mmap, fts, openat); the status line is " <name>: run
+	# time ..." with the name cut to 8 characters.
+	setup=$(grep -E "^[a-z]+\((size=|incarnations=)" "$LOGDIR/s2-$t.log" | head -1)
+	size=$(echo "$setup" | grep -oE "size=[0-9]+")
+	if [ "$t" = fts ]; then
+		# fts walks while the other tests create and delete: ENOENT on a
+		# vanished entry is the expected race, anything else is not
+		races=$(grep -cE "^fts: .*: No such file or directory$" "$LOGDIR/s2-$t.log")
+		odd=$(grep -vE "^ *[a-z]{1,8}: run time|^[a-z]+\((size=|incarnations=)|^rc=|^fts: .*: No such file or directory$" "$LOGDIR/s2-$t.log" | grep -c .)
+		log "stress2 $t: rc=${rc:-?} ${size:-nosize} vanished-entry-races=$races other-lines=$odd"
+	else
+		odd=$(grep -vE "^ *[a-z]{1,8}: run time|^[a-z]+\((size=|incarnations=)|^rc=" "$LOGDIR/s2-$t.log" | grep -c .)
+		log "stress2 $t: rc=${rc:-?} ${size:-nosize} other-lines=$odd"
+	fi
 	[ "${rc:-1}" -eq 0 ] || problem "stress2 $t rc=$rc"
-	case "$size" in *"size=0"|"") problem "stress2 $t did nothing (size 0 or missing)";; esac
+	[ -n "$setup" ] || [ "$t" = fts ] || problem "stress2 $t never printed its setup line (did nothing?)"
+	case "$size" in size=0) problem "stress2 $t did nothing (size 0)";; esac
 	[ $odd -eq 0 ] || problem "stress2 $t printed $odd unexpected lines (see s2-$t.log)"
 done
 left=$(ls -A "$MNT/stressX" 2>/dev/null | wc -l | tr -d ' ')

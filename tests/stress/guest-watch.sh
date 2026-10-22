@@ -14,7 +14,7 @@
 DIR=${1:?dir}; SECS=${2:?seconds}; TTLMS=${3:-200}
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000' 2>/dev/null || echo $(( $(date +%s) * 1000 )); }
 end=$(( $(date +%s) + SECS ))
-last=0; maxlag=0; sumlag=0; nhb=0; bad=0; lsfail=0; lastsize=0; shrink=0
+last=0; maxlag=0; sumlag=0; nhb=0; bad=0; torn=0; lsfail=0; lastsize=0; shrink=0
 until [ -f "$DIR/hb.txt" ] || [ "$(date +%s)" -ge $end ]; do sleep 1; done
 while [ "$(date +%s)" -lt $end ]; do
 	hb=$(cat "$DIR/hb.txt" 2>/dev/null)
@@ -24,10 +24,17 @@ while [ "$(date +%s)" -lt $end ]; do
 		last=$1; nhb=$((nhb + 1)); sumlag=$((sumlag + lag))
 		[ $lag -gt $maxlag ] && maxlag=$lag
 	fi
-	# in-place rewritten file must never show a mix of two versions
+	# The in-place rewritten file is truncated and refilled by the host, so
+	# the guest may see a short file or, when its cached size is older than
+	# the data it just fetched, the new bytes followed by zeros.  Both are
+	# the expected size/data race of a ttl cache (NFS behaves the same) and
+	# are only counted; two different non-zero bytes in one read would mean
+	# old and new content got mixed, which is a cache bug.
 	if [ -s "$DIR/inplace.dat" ]; then
-		kinds=$(head -c 7000 "$DIR/inplace.dat" | tr -d '\n' | fold -w1 | sort -u | wc -l)
-		[ "$kinds" -gt 1 ] && { bad=$((bad + 1)); echo "inplace.dat: $kinds different bytes at $(date -u +%T)"; }
+		kinds=$(head -c 7000 "$DIR/inplace.dat" | tr -d '\n\000' | fold -w1 | sort -u | wc -l)
+		zeros=$(head -c 7000 "$DIR/inplace.dat" | tr -cd '\000' | wc -c)
+		[ "$zeros" -gt 0 ] && torn=$((torn + 1))
+		[ "$kinds" -gt 1 ] && { bad=$((bad + 1)); echo "inplace.dat: $kinds different non-zero bytes at $(date -u +%T)"; }
 	fi
 	size=$(stat -f %z "$DIR/append.log" 2>/dev/null || echo 0)
 	[ "$size" -lt "$lastsize" ] && { shrink=$((shrink + 1)); echo "append.log shrank $lastsize -> $size"; }
@@ -36,5 +43,5 @@ while [ "$(date +%s)" -lt $end ]; do
 	sleep 0.5
 done
 avg=0; [ $nhb -gt 0 ] && avg=$((sumlag / nhb))
-echo "guest-watch: heartbeats seen $nhb (last $last), max lag ${maxlag}ms, avg lag ${avg}ms, ttl ${TTLMS}ms; inplace inconsistencies $bad, append.log shrinks $shrink, ls failures $lsfail"
+echo "guest-watch: heartbeats seen $nhb (last $last), max lag ${maxlag}ms, avg lag ${avg}ms, ttl ${TTLMS}ms; inplace mixed-content reads $bad, torn (size/data race) reads $torn, append.log shrinks $shrink, ls failures $lsfail"
 [ $maxlag -le $((TTLMS + 2000)) ] && [ $bad -eq 0 ] && [ $shrink -eq 0 ] && [ $lsfail -eq 0 ]
