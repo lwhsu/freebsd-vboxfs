@@ -960,7 +960,12 @@ vboxvfs_rmdir(struct vop_rmdir_args *ap)
 	sx_xlock(&np->vn_dirsx);
 	vboxvfs_node_freedir(np);
 	sx_xunlock(&np->vn_dirsx);
+	vn_seqc_write_begin(dvp);
+	vn_seqc_write_begin(vp);
 	vboxvfs_node_remove(np);
+	cache_vop_rmdir(dvp, vp);
+	vn_seqc_write_end(vp);
+	vn_seqc_write_end(dvp);
 	vboxvfs_node_invalattr(dnp);
 	return (0);
 }
@@ -983,6 +988,7 @@ vboxvfs_rename(struct vop_rename_args *ap)
 	size_t srclen, dstlen;
 	uint32_t rflags;
 	int error;
+	bool fvp_locked, seqc;
 
 	fdvp = ap->a_fdvp;
 	fvp = ap->a_fvp;
@@ -991,6 +997,8 @@ vboxvfs_rename(struct vop_rename_args *ap)
 	tvp = ap->a_tvp;
 	tcnp = ap->a_tcnp;
 	src = dst = NULL;
+	fvp_locked = false;
+	seqc = false;
 
 	if (fvp->v_mount != tdvp->v_mount ||
 	    (tvp != NULL && fvp->v_mount != tvp->v_mount)) {
@@ -1001,6 +1009,56 @@ vboxvfs_rename(struct vop_rename_args *ap)
 		error = 0;
 		goto out;
 	}
+	if (fvp == tdvp) {
+		/* Renaming a directory into itself. */
+		error = EINVAL;
+		goto out;
+	}
+
+	/*
+	 * vfs_hash_rehash() wants fvp locked exclusively.  tdvp and tvp are
+	 * already locked; try fvp without sleeping first, otherwise drop the
+	 * target locks and take all three again, never sleeping on a target
+	 * while holding fvp (a lookup may hold the directory and wait for
+	 * fvp).
+	 */
+	if (vn_lock(fvp, LK_EXCLUSIVE | LK_NOWAIT) != 0) {
+		VOP_UNLOCK(tdvp);
+		if (tvp != NULL && tvp != tdvp)
+			VOP_UNLOCK(tvp);
+		for (;;) {
+			vn_lock(fvp, LK_EXCLUSIVE | LK_RETRY);
+			if (vn_lock(tdvp, LK_EXCLUSIVE | LK_NOWAIT) != 0) {
+				VOP_UNLOCK(fvp);
+				vn_lock(tdvp, LK_EXCLUSIVE | LK_RETRY);
+				VOP_UNLOCK(tdvp);
+				continue;
+			}
+			if (tvp != NULL && tvp != tdvp &&
+			    vn_lock(tvp, LK_EXCLUSIVE | LK_NOWAIT) != 0) {
+				VOP_UNLOCK(tdvp);
+				VOP_UNLOCK(fvp);
+				vn_lock(tvp, LK_EXCLUSIVE | LK_RETRY);
+				VOP_UNLOCK(tvp);
+				continue;
+			}
+			break;
+		}
+		if (VN_IS_DOOMED(fvp) || VN_IS_DOOMED(tdvp) ||
+		    (tvp != NULL && VN_IS_DOOMED(tvp))) {
+			VOP_UNLOCK(fvp);
+			error = ENOENT;
+			goto out;
+		}
+	}
+	fvp_locked = true;
+	/* Tell lockless lookups that these vnodes are being modified. */
+	if (tvp != NULL)
+		vn_seqc_write_begin(tvp);
+	vn_seqc_write_begin(tdvp);
+	vn_seqc_write_begin(fvp);
+	vn_seqc_write_begin(fdvp);
+	seqc = true;
 	fdnp = VTOVBOXVFS(fdvp);
 	fnp = VTOVBOXVFS(fvp);
 	tdnp = VTOVBOXVFS(tdvp);
@@ -1062,6 +1120,13 @@ vboxvfs_rename(struct vop_rename_args *ap)
 	vboxvfs_node_invalattr(tdnp);
 	vboxvfs_node_invalattr(fnp);
 out:
+	if (seqc) {
+		if (tvp != NULL)
+			vn_seqc_write_end(tvp);
+		vn_seqc_write_end(tdvp);
+		vn_seqc_write_end(fvp);
+		vn_seqc_write_end(fdvp);
+	}
 	if (src != NULL)
 		vboxvfs_node_freepath(src);
 	if (dst != NULL)
@@ -1073,7 +1138,10 @@ out:
 	if (tvp != NULL)
 		vput(tvp);
 	vrele(fdvp);
-	vrele(fvp);
+	if (fvp_locked)
+		vput(fvp);
+	else
+		vrele(fvp);
 	return (error);
 }
 

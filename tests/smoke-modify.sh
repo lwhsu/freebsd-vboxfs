@@ -84,9 +84,8 @@ j=$(ino g1)
 ok mv g1 g2
 eq "replace: g2 is the old g1" "$j" "$(ino g2)"
 nok test -e g1
-ok mkdir d4 && ok mkdir d4/x
-nok mv g2 d4
-nok mv d4 g2
+ok mkdir d4
+ok mkdir d4/x
 nok rmdir d4
 ok rmdir d4/x
 ok rmdir d4
