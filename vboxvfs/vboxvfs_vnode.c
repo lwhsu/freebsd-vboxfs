@@ -404,24 +404,51 @@ vboxvfs_mode2dtype(RTFMODE fmode)
  * The inode number of a directory entry: that of its node if one is
  * cached (it may have been renamed into place), else the hash of its path.
  */
+/*
+ * Vnodes referenced while building a listing; they are released only after
+ * vn_dirsx is dropped, because vrele() may need the child's vnode lock
+ * (inactive processing) and that must not be taken under the sx lock.
+ */
+struct vboxvfs_dirheld {
+	struct vnode	**vps;
+	u_int		  n;
+	u_int		  cap;
+};
+
 static ino_t
 vboxvfs_dir_entry_ino(struct vboxvfs_node *dnp, const char *dirpath,
-    size_t dirlen, const char *name, u_int namelen)
+    size_t dirlen, const char *name, u_int namelen,
+    struct vboxvfs_dirheld *held)
 {
 	struct vnode *vp;
-	ino_t ino;
 
 	vboxvfs_node_ref(dnp, name, namelen, &vp);
 	if (vp != NULL) {
-		ino = VTOVBOXVFS(vp)->vn_ino;
-		vrele(vp);
-		return (ino);
+		if (held->n == held->cap) {
+			held->cap = MAX(held->cap * 2, 64);
+			held->vps = realloc(held->vps,
+			    held->cap * sizeof(*held->vps), M_VBOXVFS, M_WAITOK);
+		}
+		held->vps[held->n++] = vp;
+		return (VTOVBOXVFS(vp)->vn_ino);
 	}
 	return (vboxvfs_node_childino(dirpath, dirlen, name, namelen));
 }
 
+static void
+vboxvfs_dirheld_release(struct vboxvfs_dirheld *held)
+{
+	u_int i;
+
+	for (i = 0; i < held->n; i++)
+		vrele(held->vps[i]);
+	free(held->vps, M_VBOXVFS);
+	held->vps = NULL;
+	held->n = held->cap = 0;
+}
+
 static int
-vboxvfs_dir_fill(struct vboxvfs_node *np)
+vboxvfs_dir_fill(struct vboxvfs_node *np, struct vboxvfs_dirheld *held)
 {
 	struct vboxvfs_mount *vmp;
 	SHFLDIRINFO *de;
@@ -492,7 +519,7 @@ vboxvfs_dir_fill(struct vboxvfs_node *np)
 			}
 			error = vboxvfs_dir_append(np,
 			    vboxvfs_dir_entry_ino(np, dirpath, dirlen,
-			    de->name.String.ach, de->name.u16Length),
+			    de->name.String.ach, de->name.u16Length, held),
 			    vboxvfs_mode2dtype(de->Info.Attr.fMode),
 			    de->name.String.ach, de->name.u16Length);
 			if (error != 0)
@@ -513,6 +540,7 @@ static int
 vboxvfs_readdir(struct vop_readdir_args *ap)
 {
 	struct vboxvfs_node *np;
+	struct vboxvfs_dirheld held;
 	struct vnode *vp;
 	struct uio *uio;
 	struct dirent *dp;
@@ -534,17 +562,21 @@ vboxvfs_readdir(struct vop_readdir_args *ap)
 	VBOXVFS_DPRINTF(VBOXVFS_DEBUG_VOP, "readdir ino %ju offset %u\n",
 	    (uintmax_t)np->vn_ino, idx);
 
+	held.vps = NULL;
+	held.n = held.cap = 0;
 	sx_xlock(&np->vn_dirsx);
 	if (idx == 0 || np->vn_dirbuf == NULL) {
 		vboxvfs_node_freedir(np);
-		error = vboxvfs_dir_fill(np);
+		error = vboxvfs_dir_fill(np, &held);
 		if (error != 0) {
 			sx_xunlock(&np->vn_dirsx);
+			vboxvfs_dirheld_release(&held);
 			return (error);
 		}
 	}
 	if (idx > np->vn_dircnt) {
 		sx_xunlock(&np->vn_dirsx);
+		vboxvfs_dirheld_release(&held);
 		return (EINVAL);
 	}
 
@@ -558,6 +590,7 @@ vboxvfs_readdir(struct vop_readdir_args *ap)
 	}
 	if (nfit == 0 && idx < np->vn_dircnt) {
 		sx_xunlock(&np->vn_dirsx);
+		vboxvfs_dirheld_release(&held);
 		return (EINVAL);
 	}
 	if (ap->a_ncookies != NULL) {
@@ -587,6 +620,7 @@ vboxvfs_readdir(struct vop_readdir_args *ap)
 	if (uio->uio_offset >= np->vn_dircnt)
 		vboxvfs_node_freedir(np);
 	sx_xunlock(&np->vn_dirsx);
+	vboxvfs_dirheld_release(&held);
 	return (error);
 }
 

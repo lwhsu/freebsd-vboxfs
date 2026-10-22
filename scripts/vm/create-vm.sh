@@ -64,7 +64,7 @@ $VBOXMANAGE modifymedium disk "$VDI" --resize "$DISK_MB"
 $VBOXMANAGE createvm --name "$VM" --ostype "$OSTYPE" --register --basefolder "$VM_DIR"
 $VBOXMANAGE modifyvm "$VM" --cpus "$CPUS" --memory "$MEM" --vram 16 \
     --firmware "$FIRMWARE" --graphicscontroller vmsvga \
-    --audio-enabled off --usb-ohci off --mouse ps2 \
+    --audio-enabled off --usb-ohci off --mouse ps2 --rtc-use-utc on \
     --nic1 nat --nat-pf1 "ssh,tcp,127.0.0.1,$PORT,,22" --nat-localhostreachable1 on \
     --uart1 0x3F8 4 --uart-mode1 file "$VM_DIR/$VM-console.log"
 $VBOXMANAGE storagectl "$VM" --name SATA --add sata --controller IntelAhci --portcount 4 \

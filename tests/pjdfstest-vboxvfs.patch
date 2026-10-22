@@ -1,0 +1,201 @@
+diff -ru tests/misc.sh tests/misc.sh
+--- tests/misc.sh	2026-10-22 09:36:06.211143000 +0800
++++ tests/misc.sh	2026-10-22 09:36:06.238105000 +0800
+@@ -180,6 +180,10 @@
+ 		if [ "${os}" != "FreeBSD" ]; then
+ 			return 1
+ 		fi
++		# VirtualBox shared folders have no file flags.
++		if [ "${fs}" = "VBOXVFS" ]; then
++			return 1
++		fi
+ 		# Only OSXFuse supports chflags
+ 		if [ "${fs%%.*}" = "FUSEFS" ]; then
+ 			return 1
+@@ -194,8 +198,17 @@
+ 		if [ "${fs}" = "FUSE.GCSFUSE" -o "${fs}" = "FUSE.S3FS" ]; then
+ 			return 1
+ 		fi
++		# The VirtualBox shared folder protocol has no hard links.
++		if [ "${fs}" = "VBOXVFS" ]; then
++			return 1
++		fi
+ 		;;
+-	mknod)
++	mknod|mkfifo)
++		# The VirtualBox shared folder protocol has no device nodes,
++		# fifos or sockets.
++		if [ "${fs}" = "VBOXVFS" ]; then
++			return 1
++		fi
+ 		;;
+ 	posix_fallocate)
+ 		if [ "${os}" != "FreeBSD" ]; then
+@@ -211,6 +224,11 @@
+ 		# anyway.
+ 		# https://pubs.opengroup.org/onlinepubs/9699919799/functions/rename.html
+ 		case "${fs}" in
++		VBOXVFS)
++			# The host decides; FreeBSD and Linux hosts do not
++			# touch ctime on rename.
++			return 1
++			;;
+ 		EXT4)
+ 			return 0
+ 			;;
+diff -ru tests/mkfifo/00.t tests/mkfifo/00.t
+--- tests/mkfifo/00.t	2026-10-22 09:36:06.215964000 +0800
++++ tests/mkfifo/00.t	2026-10-22 09:36:06.242175000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ echo "1..36"
+ 
+ n0=`namegen`
+diff -ru tests/mkfifo/01.t tests/mkfifo/01.t
+--- tests/mkfifo/01.t	2026-10-22 09:36:06.216001000 +0800
++++ tests/mkfifo/01.t	2026-10-22 09:36:06.248160000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ echo "1..17"
+ 
+ n0=`namegen`
+diff -ru tests/mkfifo/02.t tests/mkfifo/02.t
+--- tests/mkfifo/02.t	2026-10-22 09:36:06.216155000 +0800
++++ tests/mkfifo/02.t	2026-10-22 09:36:06.253049000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ echo "1..4"
+ 
+ nx=`namegen_max`
+diff -ru tests/mkfifo/03.t tests/mkfifo/03.t
+--- tests/mkfifo/03.t	2026-10-22 09:36:06.216117000 +0800
++++ tests/mkfifo/03.t	2026-10-22 09:36:06.256082000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ echo "1..4"
+ 
+ nx=`dirgen_max`
+diff -ru tests/mkfifo/04.t tests/mkfifo/04.t
+--- tests/mkfifo/04.t	2026-10-22 09:36:06.215887000 +0800
++++ tests/mkfifo/04.t	2026-10-22 09:36:06.262964000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ echo "1..3"
+ 
+ n0=`namegen`
+diff -ru tests/mkfifo/05.t tests/mkfifo/05.t
+--- tests/mkfifo/05.t	2026-10-22 09:36:06.215851000 +0800
++++ tests/mkfifo/05.t	2026-10-22 09:36:06.269396000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ echo "1..12"
+ 
+ n0=`namegen`
+diff -ru tests/mkfifo/06.t tests/mkfifo/06.t
+--- tests/mkfifo/06.t	2026-10-22 09:36:06.215758000 +0800
++++ tests/mkfifo/06.t	2026-10-22 09:36:06.274936000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ echo "1..12"
+ 
+ n0=`namegen`
+diff -ru tests/mkfifo/07.t tests/mkfifo/07.t
+--- tests/mkfifo/07.t	2026-10-22 09:36:06.215813000 +0800
++++ tests/mkfifo/07.t	2026-10-22 09:36:06.281730000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ echo "1..6"
+ 
+ n0=`namegen`
+diff -ru tests/mkfifo/08.t tests/mkfifo/08.t
+--- tests/mkfifo/08.t	2026-10-22 09:36:06.216231000 +0800
++++ tests/mkfifo/08.t	2026-10-22 09:36:06.284916000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ [ "${os}:${fs}" = "FreeBSD:UFS" ] || quick_exit
+ 
+ echo "1..7"
+diff -ru tests/mkfifo/09.t tests/mkfifo/09.t
+--- tests/mkfifo/09.t	2026-10-22 09:36:06.216080000 +0800
++++ tests/mkfifo/09.t	2026-10-22 09:36:06.291482000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ echo "1..21"
+ 
+ n0=`namegen`
+diff -ru tests/mkfifo/10.t tests/mkfifo/10.t
+--- tests/mkfifo/10.t	2026-10-22 09:36:06.215925000 +0800
++++ tests/mkfifo/10.t	2026-10-22 09:36:06.298522000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ require chflags
+ 
+ case "${os}:${fs}" in
+diff -ru tests/mkfifo/11.t tests/mkfifo/11.t
+--- tests/mkfifo/11.t	2026-10-22 09:36:06.216041000 +0800
++++ tests/mkfifo/11.t	2026-10-22 09:36:06.303543000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ [ "${os}:${fs}" = "FreeBSD:UFS" ] || quick_exit
+ 
+ echo "1..3"
+diff -ru tests/mkfifo/12.t tests/mkfifo/12.t
+--- tests/mkfifo/12.t	2026-10-22 09:36:06.216193000 +0800
++++ tests/mkfifo/12.t	2026-10-22 09:36:06.310197000 +0800
+@@ -6,6 +6,8 @@
+ dir=`dirname $0`
+ . ${dir}/../misc.sh
+ 
++require mkfifo
++
+ echo "1..2"
+ 
+ expect EFAULT mkfifo NULL 0644
