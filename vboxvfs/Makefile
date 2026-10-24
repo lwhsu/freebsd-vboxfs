@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-only OR BSD-2-Clause
+# SPDX-License-Identifier: BSD-2-Clause
 #
 # Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
 #

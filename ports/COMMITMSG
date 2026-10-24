@@ -43,10 +43,9 @@ run at 4 times the speed of the old driver's write-through and twice
 the Linux client's; large sequential reads and writes are 4 to 8 times
 faster than the Linux client.
 
-The sources are dual licensed GPL-3.0-only OR BSD-2-Clause and are
-maintained at https://github.com/lwhsu/freebsd-vboxfs; the patches in
-this commit are generated from that tree by ports/gen-ports-patch.sh.
-The man page is installed now, and pkg-message tells how to mount a
-share.
+The new sources are under the BSD 2-Clause license and are maintained
+at https://github.com/lwhsu/freebsd-vboxfs; the patches in this commit
+are generated from that tree by ports/gen-ports-patch.sh.  The man
+page is installed now, and pkg-message tells how to mount a share.
 
 PR:		238516

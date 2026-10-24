@@ -3,11 +3,13 @@
 A rewrite of the VirtualBox shared folder client for FreeBSD guests:
 the `vboxvfs` kernel module and the `mount_vboxvfs(8)` utility.
 
-The code in this branch (`rewrite`) is new work, dual-licensed under
-`GPL-3.0-only OR BSD-2-Clause` (see `LICENSE`).  It does not derive from the
-2016 Solaris-based port that lives on the `master` branch and in the FreeBSD
+The code in this branch (`rewrite`) is new work under the BSD 2-Clause
+license (`BSD-2-Clause`, see `LICENSE`).  It does not derive from the 2016
+Solaris-based port that lives on the `master` branch and in the FreeBSD
 ports tree (`emulators/virtualbox-ose-additions-72`); that code is kept only
-for history.
+for history.  The one file that is not ours is `vboxvfs/Makefile.kmk`:
+Oracle's kBuild file for the module with a few changes, which keeps
+Oracle's GPL-3.0-only license.
 
 ## Layout
 
