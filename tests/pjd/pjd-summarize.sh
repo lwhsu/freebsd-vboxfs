@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Summarize a pjdfstest run: per .t file counts + per-directory table.
 # usage: pjd-summarize.sh RESULTS_DIR   (expects RESULTS_DIR/log/<dir>/<n>.t.log and RESULTS_DIR/rc.txt)
 R=${1:?results dir}

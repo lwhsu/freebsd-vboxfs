@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Classify failed pjdfstest assertions by operation and expected/got errno.
 # usage: pjd-failures.sh RESULTS_DIR  -> writes failures.tsv, prints buckets
 R=${1:?results dir}

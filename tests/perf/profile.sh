@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Run a few of the bench workloads one at a time under DTrace to count the
 # host requests vboxvfs makes for each and how long they take (hostreqs.d).
 # FreeBSD guest only; needs the module loaded and DIR on the share.

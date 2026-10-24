@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Host side: run bench.sh in a guest and collect the CSV.
 # usage: run-perf.sh VM TAG DIR OUT [REMOUNT-command] [bench args...]
 #   VM    ssh host alias

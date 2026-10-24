@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Host-side driver for run-pjd.sh: mounts the share in the guest, starts the
 # runner, watches the console log for panics and the progress file for
 # wedges, and resets the VM / relaunches the runner as needed.  Logs to

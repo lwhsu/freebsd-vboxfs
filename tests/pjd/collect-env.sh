@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Run inside the guest: environment description for the results README.
 echo "== guest =="; uname -a; sysctl -n kern.osreldate; sysctl kern.conftxt | grep -E 'INVARIANTS|WITNESS|DEBUG_VFS_LOCKS|^ident' || echo "(no INVARIANTS/WITNESS/DEBUG_VFS_LOCKS in kernel config)"
 echo "== additions pkg / modules =="; pkg info -x virtualbox 2>/dev/null; kldstat; ls -la /boot/modules/

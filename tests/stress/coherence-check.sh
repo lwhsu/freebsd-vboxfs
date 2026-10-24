@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Host-side check that a guest sees host-side changes within the attribute
 # cache ttl: the host rewrites two files in a directory of the share every
 # half second (one replaced atomically via rename, one rewritten in place)

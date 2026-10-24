@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Host side of the host/guest concurrency check: for SECONDS, keep changing
 # files under DIR (a directory inside the shared folder) the way a developer
 # editing a tree on the host would: rewrite a heartbeat file, create, append

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Compare three pjdfstest runs: NEW (this dir), OLD driver, LINUX control.
 # usage: compare.sh NEW_DIR OLD_DIR LINUX_DIR
 #   NEW_DIR/failures.tsv and OLD_DIR/failures.tsv are produced by

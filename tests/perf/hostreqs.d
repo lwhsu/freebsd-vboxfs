@@ -1,3 +1,9 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+ */
+
 /*
  * Count the host requests vboxvfs makes and time them.  Run during a
  * workload: dtrace -s hostreqs.d -c 'sh workload.sh' or for a few seconds

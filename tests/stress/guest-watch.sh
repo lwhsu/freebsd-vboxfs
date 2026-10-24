@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Guest side of the host/guest concurrency check: poll DIR (on the vboxvfs
 # mount) for SECONDS and measure how long after the host wrote each heartbeat
 # the guest first saw it (hb.txt holds "<counter> <host epoch ms>"), via

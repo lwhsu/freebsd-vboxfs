@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Group the "only FreeBSD new driver" failures (from cmp-new-vs-linux.txt) by
 # operation / expected / got, with the test description and example lines.
 # usage: classify-only-new.sh NEW_DIR  -> writes only-new-classified.txt

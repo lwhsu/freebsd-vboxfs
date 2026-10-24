@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Portable (FreeBSD sh / dash) file system benchmark used to compare the
 # vboxvfs guest driver with the Linux vboxsf client and with local disks.
 # Runs sequential dd, fio (psync and mmap engines), a metadata set (10000

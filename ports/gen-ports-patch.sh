@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Turn this tree into the FreeBSD ports changes that ship it: remove the
 # old driver's patches from the shared PATCHDIR of the virtualbox-ose-72
 # ports, add ours (new-file patches for the sources, a real diff for the

@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Guest-side pjdfstest runner: every .t file one at a time under a timeout,
 # resumable after a panic or a VM reset (already finished tests are skipped,
 # a test that was started but never finished is recorded as INTERRUPTED).

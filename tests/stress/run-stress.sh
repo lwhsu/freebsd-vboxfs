@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Host side of the stress run: records host-side baselines, runs
 # host-churn.sh against the share while the guest runs stress-10min.sh, then
 # collects the guest logs, the VBox.log shared-folder lines and the console

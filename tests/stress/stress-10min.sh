@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Guest side of the stress run (notes/04 "壓力測試"): for SECONDS run, all at
 # once on the vboxvfs mount MNT,
 #   - two fsx loops (one with mmap, one without), different seeds each pass,

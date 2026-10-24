@@ -1,4 +1,9 @@
 #!/bin/sh
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+#
 # Render a markdown table comparing several bench.sh CSV files (columns in
 # the order given).  usage: table.sh a.csv b.csv ...
 awk -F',' '
