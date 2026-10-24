@@ -1,12 +1,34 @@
-# $Id$
+# $Id: Makefile.kmk 111747 2025-11-14 16:43:28Z klaus.espenlaub@oracle.com $
 ## @file
-# Sub-Makefile for the FreeBSD guest shared folder kernel module (vboxvfs).
+# Sub-Makefile for the FreeBSD Shared folder kernel module.
 #
 
 #
-# SPDX-License-Identifier: GPL-3.0-only OR BSD-2-Clause
+# Copyright (C) 2007-2025 Oracle and/or its affiliates.
 #
-# Copyright (c) 2026 Li-Wen Hsu <lwhsu@FreeBSD.org>
+# This file is part of VirtualBox base platform packages, as
+# available from https://www.virtualbox.org.
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation, in version 3 of the
+# License.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, see <https://www.gnu.org/licenses>.
+#
+# SPDX-License-Identifier: GPL-3.0-only
+#
+
+#
+# Modified in 2026 by Li-Wen Hsu <lwhsu@FreeBSD.org> to build the rewritten
+# vboxvfs sources: a new source list, and vnode_if rules that create the
+# output directory first and run awk inside it.
 #
 
 SUB_DEPTH = ../../../../..
